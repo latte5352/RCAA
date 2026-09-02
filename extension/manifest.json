@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "SUP.8 형상감사 자동화",
+  "version": "0.1.0",
+  "description": "codebeamer 주기적 형상감사 자동화를 실행하는 확장 프로그램",
+  "action": {},
+  "permissions": ["storage", "sidePanel"],
+  "host_permissions": ["http://localhost:8000/*"],
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

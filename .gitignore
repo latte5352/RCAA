@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+backend/job_data/
+backend/history_data/
+*.xlsx
+history_*.json
