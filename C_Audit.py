@@ -29,7 +29,7 @@ COL_CREATE_DATE_CURRENT = 19  # S ("Create Date 최신 여부" - B_Audit_Data_Cr
 COL_TARGET_VERSION = 20  # T ("리뷰레포트 기재 버전" - Review Report에 기재된 대상 문서 버전)
 COL_VERSION_CHECK_FAIL_REASON = 21  # U (버전 자동 인식 실패 사유)
 COL_IS_EVENTBASED = 22  # V ("이벤트성 여부" - 트래커 status enum에 'Create Date'가 있는지로 판별, B_Audit_Data_Creation.py에서 계산)
-COL_TEST_RESULT_CLOSED_DATE = 23  # W ("Test Result 종료일(YYMMDD)" - Test Result 트래커의 대표 아이템이 Finished/Closed로 마지막 전이된 날짜, B_Audit_Data_Creation.py에서 계산)
+COL_TEST_RESULT_CLOSED_DATE = 23  # W ("종료일(YYMMDD)" - Test Result/Review Result 트래커의 대표 아이템이 Finished/Closed로 마지막 전이된 날짜, B_Audit_Data_Creation.py에서 계산)
 COL_SAVE_RULE     = 24  # X
 COL_VERSION_RULE  = 25  # Y
 COL_DOC_HISTORY_RULE = 26  # Z
@@ -127,6 +127,15 @@ def name_ends_with(name: str, suffix: str) -> bool:
     return stripped.endswith(suffix)
 
 
+# "버전" 개념이 없어 상태 규칙 대신 완료일(YYMMDD) 기준으로 검사하는 트래커 종류
+DATE_BASED_TRACKER_SUFFIXES = ("Test Result", "Review Result")
+
+
+def is_date_based_tracker(tracker_name_raw: str) -> bool:
+    pure_name = strip_process_tag(tracker_name_raw)
+    return any(name_ends_with(pure_name, suffix) for suffix in DATE_BASED_TRACKER_SUFFIXES)
+
+
 def normalize_for_naming_check(text: str) -> str:
     """파일명 규칙 비교용 정규화: 대소문자, 공백/언더스코어 구분자 차이는 같은 것으로 취급한다."""
     return re.sub(r"[_\s]+", " ", text).strip().lower()
@@ -222,6 +231,12 @@ def check_version_rule(ws, row):
         # 첫 Edit ~ 버저닝 간격을 재는 이 규칙(주기적 버전업 모델 전제) 대상이 아니다
         return None
 
+    tracker_name_raw = get_cell_value(ws, row, COL_TRACKER_NAME)
+    if is_date_based_tracker(tracker_name_raw):
+        # Test Result/Review Result는 "버전" 개념이 없어 baseline/버전업을 하지 않으므로
+        # 이 규칙 대상이 아니다 (완료일 일치 여부는 check_review_report_version_rule에서 검사)
+        return None
+
     first_edit_raw = get_cell_value(ws, row, COL_FIRST_EDIT) # 첫 Edit 시각
     versioning_raw = get_cell_value(ws, row, COL_VERSIONING) # 버저닝 시각
 
@@ -310,8 +325,6 @@ PR_ID_SPLIT_RE = re.compile(r"[\s,]+")
 
 PR_IN_DESC_RE = re.compile(r"\bPR[^\d]*?(\d+)", re.IGNORECASE) # 하이픈 유무와 무관하게 PR 뒤에 오는 첫 숫자를 PR 번호로 인식 (PR-04, PR~-04, PR04, PR 04 모두 허용)
 
-DOC_HISTORY_EXEMPT_SUFFIXES = ("Test Result", "Review Result")  # 이 접미사로 끝나는 트래커는 문서 이력 기술 규칙 대상이 아니다
-
 def check_doc_history_rule(ws, row):
     if is_eventbased(ws, row):
         # Released/Read Only + Create Date 워크플로우를 쓰는 트래커는 현재 상태가 무엇이든
@@ -319,8 +332,8 @@ def check_doc_history_rule(ws, row):
         return None
 
     tracker_name_raw = get_cell_value(ws, row, COL_TRACKER_NAME)
-    pure_name = strip_process_tag(tracker_name_raw)
-    if any(name_ends_with(pure_name, suffix) for suffix in DOC_HISTORY_EXEMPT_SUFFIXES):
+    if is_date_based_tracker(tracker_name_raw):
+        # Test Result/Review Result는 문서 이력 기술 규칙 대상이 아니다
         return None
 
     status = get_cell_value(ws, row, COL_STATUS)
@@ -367,8 +380,8 @@ def check_status_rule(ws, row):
         return None
 
     tracker_name_raw = get_cell_value(ws, row, COL_TRACKER_NAME)
-    if name_ends_with(strip_process_tag(tracker_name_raw), "Test Result"):
-        # Test Result는 상태 체계 자체가 달라 이 규칙 대신 check_review_report_version_rule에서
+    if is_date_based_tracker(tracker_name_raw):
+        # Test Result/Review Result는 상태 체계 자체가 달라 이 규칙 대신 check_review_report_version_rule에서
         # "실제 완료일과 Review Report에 기재된 완료일이 일치하는지"로 같은 취지를 검사한다
         return None
 
@@ -411,22 +424,32 @@ def check_review_report_version_rule(ws, row):
     """산출물이 Approved 상태일 때, Review Report에 기재된 대상 문서 버전이
     실제 현재 버전과 일치하는지 확인한다. (최신 버전에 대한 리뷰 없이 승인되는 것을 방지)
 
-    Test Result 트래커는 "버전" 개념이 없으므로, 같은 취지를 "실제로 Finished/Closed된
+    Test Result/Review Result 트래커는 "버전" 개념이 없으므로, 같은 취지를 "실제로 Finished/Closed된
     날짜"와 "Review Report에 기재된 대상 날짜(YYMMDD)"가 일치하는지로 검사한다. 이렇게 하면
     한 번 리뷰받고 다시 열어(Ready for execution 등) 재작업한 뒤 다시 Finished/Closed 됐는데
     Review Report가 그 이전 날짜 그대로 남아있는 경우를 잡아낸다."""
     tracker_name_raw = get_cell_value(ws, row, COL_TRACKER_NAME)
-    is_test_result = name_ends_with(strip_process_tag(tracker_name_raw), "Test Result")
+    is_date_based = is_date_based_tracker(tracker_name_raw)
     status_raw = get_cell_value(ws, row, COL_STATUS)
 
-    if is_test_result:
+    if is_date_based:
         if status_raw not in ("Finished", "Closed"):
             return None
+
+        # Test Result/Review Result는 check_status_rule을 통째로 건너뛰기 때문에, 일반 문서라면
+        # 거기서 잡아줄 "리뷰레포트 없이 완료됨" 케이스를 여기서 대신 확인해야 한다
+        upload_raw = get_cell_value(ws, row, 15).strip()  # O열: 리뷰레포트 업로드 여부
+        if upload_raw == "해당없음":
+            # 이 산출물 종류엔 애초에 Review Report 프로세스가 없음 - 검사 대상 아님
+            return None
+        if upload_raw.upper() != "TRUE":
+            reasons = [f"완료({status_raw}) 상태이나 Review Report가 업로드되지 않음"]
+            return (False, reasons, reasons)
 
         actual_date = get_cell_value(ws, row, COL_TEST_RESULT_CLOSED_DATE)
         target_date = get_cell_value(ws, row, COL_TARGET_VERSION)
         if not actual_date or not target_date:
-            # 실제 완료일을 못 구했거나, 리뷰레포트가 없거나 대상 날짜를 자동 인식하지 못한 경우
+            # 실제 완료일을 못 구했거나, 대상 날짜를 자동 인식하지 못한 경우 - 판정불가로 사람이 확인
             return None
 
         if target_date.strip() != actual_date.strip():
@@ -726,13 +749,12 @@ def run(file_path: str, periodic_cadence: str = DEFAULT_PERIODIC_CADENCE, period
         review_ver_result = check_review_report_version_rule(ws, row)
         if review_ver_result is None:
             review_ver_skip += 1
-            # Approved(또는 Test Result의 Finished/Closed)인데 리뷰 대상 버전/날짜를
+            # Approved(또는 Test Result/Review Result의 Finished/Closed)인데 리뷰 대상 버전/날짜를
             # 자동으로 못 읽은 경우만 "판정 불가" 목록에 안내
             status_raw = get_cell_value(ws, row, COL_STATUS)
             fail_reason = get_cell_value(ws, row, COL_VERSION_CHECK_FAIL_REASON)
             tracker_name_raw = get_cell_value(ws, row, COL_TRACKER_NAME)
-            is_test_result = name_ends_with(strip_process_tag(tracker_name_raw), "Test Result")
-            approved_like = status_raw in ("Finished", "Closed") if is_test_result else status_raw == 'Approved'
+            approved_like = status_raw in ("Finished", "Closed") if is_date_based_tracker(tracker_name_raw) else status_raw == 'Approved'
             if approved_like and fail_reason:
                 version_check_failures.append({
                     "트래커명": get_cell_value(ws, row, COL_TRACKER_NAME),

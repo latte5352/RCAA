@@ -201,7 +201,7 @@ async function refreshView() {
   }
 }
 
-document.getElementById("loginBtn").addEventListener("click", async () => {
+async function login() {
   showError("");
   const username = document.getElementById("username").value.trim();
   const password = document.getElementById("password").value;
@@ -229,7 +229,18 @@ document.getElementById("loginBtn").addEventListener("click", async () => {
   } catch (e) {
     showError("백엔드 서버에 연결할 수 없습니다.");
   }
-});
+}
+
+document.getElementById("loginBtn").addEventListener("click", login);
+
+for (const id of ["username", "password"]) {
+  document.getElementById(id).addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      login();
+    }
+  });
+}
 
 document.getElementById("logoutBtn").addEventListener("click", async () => {
   const sessionId = await getSessionId();

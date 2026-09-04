@@ -98,12 +98,16 @@ def extract_target_version_from_comment(comment_text, tracker_name):
     return None, "표에서 이 산출물과 일치하는 행을 찾지 못함"
 
 
-def _is_test_result_tracker(name):
-    """이름 끝의 '(MCU)', '(AP)' 같은 괄호 한정자는 무시하고 'Test Result'로 끝나는지 확인한다."""
+_DATE_BASED_TRACKER_SUFFIXES = ("Test Result", "Review Result")
+
+
+def _is_date_based_tracker(name):
+    """이름 끝의 '(MCU)', '(AP)' 같은 괄호 한정자는 무시하고 'Test Result' 또는 'Review Result'로
+    끝나는지 확인한다. 이런 트래커는 "버전" 개념이 없어 완료일(YYMMDD) 기준으로 검사한다."""
     if not name:
         return False
     stripped = _TEST_RESULT_TRAILING_QUALIFIER_RE.sub("", name).strip()
-    return stripped.endswith("Test Result")
+    return stripped.endswith(_DATE_BASED_TRACKER_SUFFIXES)
 
 
 def _to_yymmdd(iso_datetime_str):
@@ -354,11 +358,11 @@ def Audit_Data_Creation(BASE_URL, BASE_URL_V3, USERNAME, PASSWORD, PROJECT_NAME,
             # 대신 PA 아이템 자체의 현재 status 필드를 그대로 쓴다 (리뷰레포트 상태와 동일한 방식)
             current_status = pa_item_obj.get('status', {}).get('name') if pa_item_obj else None
 
-            # Test Result는 "버전"이 아니라 실제로 Finished/Closed된 날짜를 Review Report 기재
-            # 날짜와 비교하므로, 대표 아이템의 종료일(codebeamer의 "Closed At" 필드)을 YYMMDD로 뽑아둔다
-            is_test_result = _is_test_result_tracker(row.get("트래커명", ""))
-            test_result_closed_date = (
-                _to_yymmdd(pa_item_obj.get('closedAt')) if (is_test_result and pa_item_obj) else ""
+            # Test Result/Review Result는 "버전"이 아니라 실제로 Finished/Closed된 날짜를 Review Report
+            # 기재 날짜와 비교하므로, 대표 아이템의 종료일(codebeamer의 "Closed At" 필드)을 YYMMDD로 뽑아둔다
+            is_date_based = _is_date_based_tracker(row.get("트래커명", ""))
+            date_based_closed_date = (
+                _to_yymmdd(pa_item_obj.get('closedAt')) if (is_date_based and pa_item_obj) else ""
             )
 
             h_info = {"first": "", "last": "", "status": current_status or "Open", "waiting": pd.NA, "create_date_current": False}
@@ -396,7 +400,7 @@ def Audit_Data_Creation(BASE_URL, BASE_URL_V3, USERNAME, PASSWORD, PROJECT_NAME,
                 "리뷰레포트 기재 버전": rr_data["target_version"],
                 "버전 확인 실패 사유": rr_data["version_check_fail_reason"],
                 "이벤트성 여부": is_eventbased_workflow(uri),
-                "Test Result 종료일": test_result_closed_date,
+                "Test Result 종료일": date_based_closed_date,
             }
 
         
