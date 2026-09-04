@@ -9,30 +9,30 @@ const errorEl = document.getElementById("error");
 const progressWrap = document.getElementById("progressWrap");
 const progressFill = document.getElementById("progressFill");
 const stepEl = document.getElementById("step");
-const projectSelect = document.getElementById("projectSelect");
+const projectSearchInput = document.getElementById("projectSearchInput");
+const projectDropdownList = document.getElementById("projectDropdownList");
 const cadenceSelect = document.getElementById("cadenceSelect");
 const weekdaySelect = document.getElementById("weekdaySelect");
 const dayOfMonthSelect = document.getElementById("dayOfMonthSelect");
-const downloadLink = document.getElementById("downloadLink");
-const reviewNotice = document.getElementById("reviewNotice");
-const reviewActions = document.getElementById("reviewActions");
-const approveBtn = document.getElementById("approveBtn");
-const rejectBtn = document.getElementById("rejectBtn");
-const selectActions = document.getElementById("selectActions");
-const selectAllBtn = document.getElementById("selectAllBtn");
-const selectNoneBtn = document.getElementById("selectNoneBtn");
-const itemsList = document.getElementById("itemsList");
-const unregisteredWrap = document.getElementById("unregisteredWrap");
-const unregisteredList = document.getElementById("unregisteredList");
-const newTrackersWrap = document.getElementById("newTrackersWrap");
-const newTrackersList = document.getElementById("newTrackersList");
-const changedTrackersWrap = document.getElementById("changedTrackersWrap");
-const changedTrackersList = document.getElementById("changedTrackersList");
-const versionFailWrap = document.getElementById("versionFailWrap");
-const versionFailList = document.getElementById("versionFailList");
+const reviewOpenNotice = document.getElementById("reviewOpenNotice");
+const openReviewBtn = document.getElementById("openReviewBtn");
 
 let currentJobId = null;
 let pollTimer = null;
+let allProjects = [];
+let selectedProjectName = null;
+let activeOptionIndex = -1;
+let reviewWindowOpenedForJob = null;
+
+function openReviewWindow(jobId) {
+  chrome.windows.create({
+    url: chrome.runtime.getURL(`review.html?job_id=${encodeURIComponent(jobId)}`),
+    type: "popup",
+    width: 1000,
+    height: 750,
+  });
+  reviewWindowOpenedForJob = jobId;
+}
 
 function showError(message) {
   errorEl.textContent = message;
@@ -52,33 +52,106 @@ async function clearSessionId() {
 }
 
 async function loadProjects(sessionId) {
-  projectSelect.innerHTML = "<option>불러오는 중...</option>";
+  projectSearchInput.value = "불러오는 중...";
+  projectSearchInput.disabled = true;
   try {
     const res = await fetch(`${API_BASE}/api/projects?session_id=${encodeURIComponent(sessionId)}`);
     if (!res.ok) {
-      projectSelect.innerHTML = "<option>프로젝트 목록을 불러오지 못했습니다</option>";
+      projectSearchInput.value = "";
+      projectSearchInput.placeholder = "프로젝트 목록을 불러오지 못했습니다";
       return;
     }
     const { projects } = await res.json();
-    projectSelect.innerHTML = "";
-    for (const project of projects) {
-      const option = document.createElement("option");
-      option.value = project.name;
-      option.textContent = project.name;
-      projectSelect.appendChild(option);
-    }
+    allProjects = projects;
+    projectSearchInput.disabled = false;
+    projectSearchInput.value = "";
+    projectSearchInput.placeholder = "프로젝트 검색...";
 
     const { selected_project } = await chrome.storage.session.get("selected_project");
     if (selected_project && projects.some((p) => p.name === selected_project)) {
-      projectSelect.value = selected_project;
+      selectedProjectName = selected_project;
+      projectSearchInput.value = selected_project;
+    } else {
+      selectedProjectName = null;
     }
   } catch (e) {
-    projectSelect.innerHTML = "<option>백엔드 서버에 연결할 수 없습니다</option>";
+    projectSearchInput.value = "";
+    projectSearchInput.placeholder = "백엔드 서버에 연결할 수 없습니다";
   }
 }
 
-projectSelect.addEventListener("change", () => {
-  chrome.storage.session.set({ selected_project: projectSelect.value });
+function renderProjectOptions(filterText) {
+  const query = filterText.trim().toLowerCase();
+  const matches = query ? allProjects.filter((p) => p.name.toLowerCase().includes(query)) : allProjects;
+
+  projectDropdownList.innerHTML = "";
+  activeOptionIndex = -1;
+
+  if (!matches.length) {
+    const empty = document.createElement("div");
+    empty.className = "project-option-empty";
+    empty.textContent = "일치하는 프로젝트가 없습니다";
+    projectDropdownList.appendChild(empty);
+  } else {
+    matches.forEach((project) => {
+      const option = document.createElement("div");
+      option.className = "project-option";
+      option.textContent = project.name;
+      option.addEventListener("mousedown", (e) => {
+        e.preventDefault(); // input blur보다 먼저 선택 처리
+        selectProject(project.name);
+      });
+      projectDropdownList.appendChild(option);
+    });
+  }
+
+  projectDropdownList.classList.remove("hidden");
+}
+
+function selectProject(name) {
+  selectedProjectName = name;
+  projectSearchInput.value = name;
+  projectDropdownList.classList.add("hidden");
+  chrome.storage.session.set({ selected_project: name });
+}
+
+projectSearchInput.addEventListener("input", () => {
+  selectedProjectName = null;
+  renderProjectOptions(projectSearchInput.value);
+});
+
+projectSearchInput.addEventListener("focus", () => {
+  if (allProjects.length) renderProjectOptions(projectSearchInput.value);
+});
+
+projectSearchInput.addEventListener("blur", () => {
+  // mousedown에서 이미 선택 처리를 하므로, 약간의 지연 후 닫아도 안전하다
+  setTimeout(() => projectDropdownList.classList.add("hidden"), 100);
+});
+
+projectSearchInput.addEventListener("keydown", (e) => {
+  const options = Array.from(projectDropdownList.querySelectorAll(".project-option"));
+  if (!options.length) return;
+
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    activeOptionIndex = Math.min(activeOptionIndex + 1, options.length - 1);
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    activeOptionIndex = Math.max(activeOptionIndex - 1, 0);
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (activeOptionIndex >= 0) selectProject(options[activeOptionIndex].textContent);
+    return;
+  } else if (e.key === "Escape") {
+    projectDropdownList.classList.add("hidden");
+    return;
+  } else {
+    return;
+  }
+
+  options.forEach((opt, i) => opt.classList.toggle("active", i === activeOptionIndex));
+  options[activeOptionIndex].scrollIntoView({ block: "nearest" });
 });
 
 for (let day = 1; day <= 31; day++) {
@@ -179,9 +252,9 @@ document.getElementById("runBtn").addEventListener("click", async () => {
     return;
   }
 
-  const projectName = projectSelect.value;
+  const projectName = selectedProjectName;
   if (!projectName) {
-    stepEl.textContent = "프로젝트를 선택하세요.";
+    stepEl.textContent = "목록에서 프로젝트를 선택하세요.";
     return;
   }
 
@@ -218,258 +291,43 @@ document.getElementById("runBtn").addEventListener("click", async () => {
 });
 
 function hideReviewUI() {
-  downloadLink.classList.add("hidden");
-  reviewNotice.classList.add("hidden");
-  reviewActions.classList.add("hidden");
-  selectActions.classList.add("hidden");
-  itemsList.classList.add("hidden");
-  itemsList.innerHTML = "";
-  unregisteredWrap.classList.add("hidden");
-  unregisteredList.innerHTML = "";
-  newTrackersWrap.classList.add("hidden");
-  newTrackersList.innerHTML = "";
-  changedTrackersWrap.classList.add("hidden");
-  changedTrackersList.innerHTML = "";
-  versionFailWrap.classList.add("hidden");
-  versionFailList.innerHTML = "";
+  reviewOpenNotice.classList.add("hidden");
+  openReviewBtn.classList.add("hidden");
+  reviewWindowOpenedForJob = null;
 }
 
-async function loadVersionCheckFailures(jobId) {
-  try {
-    const res = await fetch(`${API_BASE}/api/audit-jobs/${jobId}/version-check-failures`);
-    if (!res.ok) return;
-    const { failures } = await res.json();
-    if (!failures || !failures.length) return;
-
-    versionFailList.innerHTML = "";
-    for (const failure of failures) {
-      const row = document.createElement("div");
-      row.className = "version-fail-row";
-
-      const name = document.createElement("div");
-      name.textContent = failure.tracker_name;
-      row.appendChild(name);
-
-      const reason = document.createElement("div");
-      reason.className = "version-fail-reason";
-      reason.textContent = failure.reason;
-      row.appendChild(reason);
-
-      versionFailList.appendChild(row);
-    }
-    versionFailWrap.classList.remove("hidden");
-  } catch (e) {
-    // 조용히 무시 - 참고용 정보라 실패해도 검토/승인 흐름을 막지 않는다
-  }
-}
-
-async function loadUnregisteredTrackers(jobId) {
-  try {
-    const res = await fetch(`${API_BASE}/api/audit-jobs/${jobId}/unregistered`);
-    if (!res.ok) return;
-    const { trackers } = await res.json();
-    if (!trackers.length) return;
-
-    unregisteredList.innerHTML = "";
-    for (const tracker of trackers) {
-      const row = document.createElement("div");
-      row.textContent = tracker.tracker_name;
-      unregisteredList.appendChild(row);
-    }
-    unregisteredWrap.classList.remove("hidden");
-  } catch (e) {
-    // 조용히 무시 - 이 목록은 참고용 경고라 실패해도 검토/승인 흐름을 막지 않는다
-  }
-}
-
-async function loadChanges(jobId) {
-  try {
-    const res = await fetch(`${API_BASE}/api/audit-jobs/${jobId}/changes`);
-    if (!res.ok) return;
-    const { new_trackers, changed_trackers } = await res.json();
-
-    if (new_trackers && new_trackers.length) {
-      newTrackersList.innerHTML = "";
-      for (const name of new_trackers) {
-        const row = document.createElement("div");
-        row.textContent = name;
-        newTrackersList.appendChild(row);
-      }
-      newTrackersWrap.classList.remove("hidden");
-    }
-
-    if (changed_trackers && changed_trackers.length) {
-      changedTrackersList.innerHTML = "";
-      for (const change of changed_trackers) {
-        const row = document.createElement("div");
-        row.className = "change-row";
-
-        const name = document.createElement("div");
-        name.className = "change-name";
-        name.textContent = change.tracker_name;
-        row.appendChild(name);
-
-        const detail = document.createElement("div");
-        detail.className = "change-detail";
-        const parts = [];
-        if (change.previous_status !== change.current_status) {
-          parts.push(`상태: ${change.previous_status ?? "-"} → ${change.current_status ?? "-"}`);
-        }
-        if (change.previous_version !== change.current_version) {
-          parts.push(`버전: ${change.previous_version ?? "-"} → ${change.current_version ?? "-"}`);
-        }
-        detail.textContent = parts.join(" / ");
-        row.appendChild(detail);
-
-        changedTrackersList.appendChild(row);
-      }
-      changedTrackersWrap.classList.remove("hidden");
-    }
-  } catch (e) {
-    // 조용히 무시 - 참고용 정보라 실패해도 검토/승인 흐름을 막지 않는다
-  }
-}
-
-function badge(label, isNg) {
-  const span = document.createElement("span");
-  span.className = `badge ${isNg ? "ng" : "ok"}`;
-  span.textContent = label;
-  return span;
-}
-
-async function loadReviewItems(jobId) {
-  itemsList.innerHTML = "불러오는 중...";
-  itemsList.classList.remove("hidden");
-  try {
-    const res = await fetch(`${API_BASE}/api/audit-jobs/${jobId}/items`);
-    if (!res.ok) {
-      itemsList.textContent = "항목 목록을 불러오지 못했습니다.";
-      return;
-    }
-    const { items } = await res.json();
-    itemsList.innerHTML = "";
-
-    for (const item of items) {
-      const row = document.createElement("label");
-      row.className = "item-row";
-
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.checked = true;
-      checkbox.dataset.cilId = item.cil_id;
-      row.appendChild(checkbox);
-
-      const body = document.createElement("div");
-      body.className = "item-body";
-
-      const name = document.createElement("div");
-      name.className = "item-name";
-      name.textContent = item.tracker_name;
-      body.appendChild(name);
-
-      const badges = document.createElement("div");
-      badges.className = "item-badges";
-      badges.appendChild(badge("저장", item.save_rule === 2));
-      badges.appendChild(badge("버전", item.version_rule === 2));
-      badges.appendChild(badge("이력", item.doc_history_rule === 2));
-      badges.appendChild(badge("상태", item.status_rule === 2));
-      body.appendChild(badges);
-
-      const comment = document.createElement("div");
-      comment.className = "item-comment";
-      comment.textContent = item.comment || "";
-      body.appendChild(comment);
-
-      row.appendChild(body);
-      itemsList.appendChild(row);
-    }
-
-    selectActions.classList.remove("hidden");
-  } catch (e) {
-    itemsList.textContent = "백엔드 서버에 연결할 수 없습니다.";
-  }
-}
-
-selectAllBtn.addEventListener("click", () => {
-  itemsList.querySelectorAll('input[type="checkbox"]').forEach((cb) => (cb.checked = true));
-});
-
-selectNoneBtn.addEventListener("click", () => {
-  itemsList.querySelectorAll('input[type="checkbox"]').forEach((cb) => (cb.checked = false));
-});
-
-approveBtn.addEventListener("click", async () => {
-  const sessionId = await getSessionId();
-  if (!sessionId || !currentJobId) return;
-
-  const excludedCilIds = Array.from(itemsList.querySelectorAll('input[type="checkbox"]'))
-    .filter((cb) => !cb.checked)
-    .map((cb) => Number(cb.dataset.cilId));
-
-  reviewActions.classList.add("hidden");
-  reviewNotice.classList.add("hidden");
-  selectActions.classList.add("hidden");
-  itemsList.classList.add("hidden");
-  unregisteredWrap.classList.add("hidden");
-  newTrackersWrap.classList.add("hidden");
-  changedTrackersWrap.classList.add("hidden");
-  versionFailWrap.classList.add("hidden");
-  stepEl.textContent = "반영 진행 요청 중...";
-
-  const res = await fetch(`${API_BASE}/api/audit-jobs/${currentJobId}/approve`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, excluded_cil_ids: excludedCilIds }),
-  });
-  if (res.status === 401) {
-    await clearSessionId();
-    await refreshView();
-    return;
-  }
-  startPolling();
-});
-
-rejectBtn.addEventListener("click", async () => {
-  if (!currentJobId) return;
-  await fetch(`${API_BASE}/api/audit-jobs/${currentJobId}/reject`, { method: "POST" });
-  reviewActions.classList.add("hidden");
-  reviewNotice.classList.add("hidden");
-  selectActions.classList.add("hidden");
-  itemsList.classList.add("hidden");
-  unregisteredWrap.classList.add("hidden");
-  newTrackersWrap.classList.add("hidden");
-  changedTrackersWrap.classList.add("hidden");
-  versionFailWrap.classList.add("hidden");
-  stepEl.textContent = "취소됨 (codebeamer에는 반영되지 않았습니다)";
+openReviewBtn.addEventListener("click", () => {
+  if (currentJobId) openReviewWindow(currentJobId);
 });
 
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
-    const res = await fetch(`${API_BASE}/api/audit-jobs/${currentJobId}`);
-    const job = await res.json();
+    let job;
+    try {
+      const res = await fetch(`${API_BASE}/api/audit-jobs/${currentJobId}`);
+      job = await res.json();
+    } catch (e) {
+      stepEl.textContent = "백엔드 서버에 연결할 수 없습니다. 재연결 시도 중...";
+      return;
+    }
 
     progressFill.style.width = `${job.progress || 0}%`;
     stepEl.textContent = job.step || job.status;
 
-    if (job.result_file) {
-      downloadLink.href = `${API_BASE}/api/audit-jobs/${currentJobId}/download`;
-      downloadLink.classList.remove("hidden");
-    }
-
     if (job.status === "awaiting_review") {
-      clearInterval(pollTimer);
-      reviewNotice.classList.remove("hidden");
-      reviewActions.classList.remove("hidden");
-      loadReviewItems(currentJobId);
-      loadUnregisteredTrackers(currentJobId);
-      loadChanges(currentJobId);
-      loadVersionCheckFailures(currentJobId);
-    } else if (job.status === "done" || job.status === "failed") {
+      reviewOpenNotice.classList.remove("hidden");
+      openReviewBtn.classList.remove("hidden");
+      if (reviewWindowOpenedForJob !== currentJobId) {
+        openReviewWindow(currentJobId);
+      }
+    } else if (job.status === "done" || job.status === "failed" || job.status === "cancelled") {
       clearInterval(pollTimer);
       if (job.status === "failed") {
         stepEl.textContent = `실패: ${job.error}`;
       }
+      reviewOpenNotice.classList.add("hidden");
+      openReviewBtn.classList.add("hidden");
     }
   }, 2000);
 }

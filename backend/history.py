@@ -32,7 +32,7 @@ def _save_snapshot(project_name: str, snapshot: dict):
 
 
 def _extract_current_snapshot(detail_xlsx_path: Path) -> dict:
-    df = pd.read_excel(detail_xlsx_path, sheet_name="상세")
+    df = pd.read_excel(detail_xlsx_path, sheet_name="데이터")
     snapshot = {}
     for _, row in df.iterrows():
         name = row.get("트래커명")

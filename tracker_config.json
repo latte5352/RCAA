@@ -8,22 +8,5 @@
     "Problem Status Report",
     "Problem Trend Report",
     "Change Request Status Report"
-  ],
-  "eventbased_trackers": [
-    "Impact Analysis Report",
-    "Impact Analysis Review Report",
-    "Change Request Management Plan",
-    "Change Request Management Plan Review Report",
-    "Process Improvement Plan",
-    "Process Improvement Plan Review Report",
-    "Process Improvement List",
-    "Kick off Meeting Record",
-    "Project Close Meeting Record",
-    "Safety Case",
-    "Functional Safety Assessment Plan",
-    "Functional Safety Assessment Plan Review Report",
-    "Functional Safety Audit Report",
-    "Functional Safety Assessment Report",
-    "Confirmation Review Report"
   ]
 }

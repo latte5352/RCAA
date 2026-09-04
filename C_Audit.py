@@ -24,14 +24,17 @@ COL_CURRENT_VERSION = 9  # I ("현재 버전" - 문서 자체의 버전)
 COL_PR_ID         = 10  # J
 COL_VERSIONING    = 11  # K
 COL_VER_DESC      = 12  # L
+COL_OWNER         = 18  # R ("담당자")
 COL_CREATE_DATE_CURRENT = 19  # S ("Create Date 최신 여부" - B_Audit_Data_Creation.py에서 계산)
 COL_TARGET_VERSION = 20  # T ("리뷰레포트 기재 버전" - Review Report에 기재된 대상 문서 버전)
 COL_VERSION_CHECK_FAIL_REASON = 21  # U (버전 자동 인식 실패 사유)
-COL_SAVE_RULE     = 22  # V
-COL_VERSION_RULE  = 23  # W
-COL_DOC_HISTORY_RULE = 24  # X
-COL_STATUS_RULE   = 25  # Y
-COL_COMMENT       = 26  # Z
+COL_IS_EVENTBASED = 22  # V ("이벤트성 여부" - 트래커 status enum에 'Create Date'가 있는지로 판별, B_Audit_Data_Creation.py에서 계산)
+COL_TEST_RESULT_CLOSED_DATE = 23  # W ("Test Result 종료일(YYMMDD)" - Test Result 트래커의 대표 아이템이 Finished/Closed로 마지막 전이된 날짜, B_Audit_Data_Creation.py에서 계산)
+COL_SAVE_RULE     = 24  # X
+COL_VERSION_RULE  = 25  # Y
+COL_DOC_HISTORY_RULE = 26  # Z
+COL_STATUS_RULE   = 27  # AA
+COL_COMMENT       = 28  # AB
 
 PROCESS_TAG_RE = re.compile(r"^\[[A-Z]+\.\d+[A-Z]?\]") # [SAF.2]Functional Safety Audit Report -> [SAF.2]
 EMPTY_FILE_VALUES = {"", "0", "미업로드"}
@@ -40,25 +43,25 @@ VERSION_DEADLINE_DAYS = 10 # 2.1) 버전 규칙 준수 : 첫 Edit 이후, Workin
 
 
 def _load_tracker_config():
-    """주기적/이벤트성 산출물 트래커 목록을 tracker_config.json에서 읽어온다.
+    """주기적 활동 산출물 트래커 목록을 tracker_config.json에서 읽어온다.
 
     새 산출물이 프로젝트에 추가됐을 때 이 코드를 건드리지 않고 그 파일만 수정하면 되도록
-    목록(데이터)을 로직(코드)에서 분리했다.
+    목록(데이터)을 로직(코드)에서 분리했다. (이벤트성 여부는 더 이상 이름 목록이 아니라
+    B_Audit_Data_Creation.py가 트래커 워크플로우로 직접 판별한 COL_IS_EVENTBASED 값을 쓴다.)
     """
     if not TRACKER_CONFIG_FILE.exists():
         raise FileNotFoundError(
             f"{TRACKER_CONFIG_FILE} 파일을 찾을 수 없습니다. "
-            "주기적/이벤트성 산출물 트래커 목록이 이 파일에 있어야 합니다."
+            "주기적 활동 산출물 트래커 목록이 이 파일에 있어야 합니다."
         )
     with TRACKER_CONFIG_FILE.open(encoding="utf-8") as f:
         data = json.load(f)
-    return set(data.get("periodic_trackers", [])), set(data.get("eventbased_trackers", []))
+    return set(data.get("periodic_trackers", []))
 
 
-# 이벤트성 활동 산출물 목록 / 주기적 활동 산출물 목록 (tracker_config.json에서 로드)
-# 2.2)/2.3) 버전규칙준수 : 주기적으로 업로드 되는 산출물 또는 일정한 주기 없이 업데이트되는 산출물의 경우,
-# 지정된 주기 내 혹은 Released/Read Only 상태임에도 불구하고 Create Date가 진행되지 않은 상태(26.05.28)
-PERIODIC_TRACKERS, EVENTBASED_TRACKERS = _load_tracker_config()
+# 주기적 활동 산출물 목록 (tracker_config.json에서 로드)
+# 2.2) 버전규칙준수 : 주기적으로 업로드 되는 산출물의 경우, 지정된 주기 내 Create Date가 진행되지 않은 상태(26.05.28)
+PERIODIC_TRACKERS = _load_tracker_config()
 
 # Create Date 검사 대상 상태 (이 워크플로우를 타는 산출물은 Released 또는 Read Only가 최종 상태이고,
 # Create Date를 누르면 즉시 이 상태로 자동 복귀하기 때문에 "현재 상태"만으로는 최신 여부를 알 수 없다.
@@ -115,6 +118,15 @@ def strip_process_tag(tracker_name: str) -> str:
     return PROCESS_TAG_RE.sub("", tracker_name).strip()
 
 
+TRAILING_QUALIFIER_RE = re.compile(r"(\s*\([^)]*\))+$")  # 이름 끝의 "(MCU)", "(AP)(BSP)" 같은 한정자
+
+
+def name_ends_with(name: str, suffix: str) -> bool:
+    """이름 끝의 '(MCU)', '(AP)' 같은 괄호 한정자는 무시하고 접미사 일치 여부를 확인한다."""
+    stripped = TRAILING_QUALIFIER_RE.sub("", name).strip()
+    return stripped.endswith(suffix)
+
+
 def normalize_for_naming_check(text: str) -> str:
     """파일명 규칙 비교용 정규화: 대소문자, 공백/언더스코어 구분자 차이는 같은 것으로 취급한다."""
     return re.sub(r"[_\s]+", " ", text).strip().lower()
@@ -122,6 +134,12 @@ def normalize_for_naming_check(text: str) -> str:
 
 def has_file(file_name: str) -> bool:
     return file_name.lower() not in EMPTY_FILE_VALUES
+
+
+def is_eventbased(ws, row) -> bool:
+    """트래커의 실제 워크플로우(status enum에 'Create Date'가 있는지)로 판별한 이벤트성 여부.
+    B_Audit_Data_Creation.py가 계산해둔 값을 그대로 읽는다 (이름 목록에 의존하지 않음)."""
+    return get_cell_value(ws, row, COL_IS_EVENTBASED).strip().upper() == "TRUE"
 
 
 def parse_datetime(value: str):
@@ -199,6 +217,11 @@ def check_save_rule(ws, row):
 # ── 버전 규칙 검사 ─────────────────────────────────────────────────────────────
 
 def check_version_rule(ws, row):
+    if is_eventbased(ws, row):
+        # 이벤트성 산출물(Review Report 등)은 Released/Read Only + Create Date 워크플로우를 쓰므로
+        # 첫 Edit ~ 버저닝 간격을 재는 이 규칙(주기적 버전업 모델 전제) 대상이 아니다
+        return None
+
     first_edit_raw = get_cell_value(ws, row, COL_FIRST_EDIT) # 첫 Edit 시각
     versioning_raw = get_cell_value(ws, row, COL_VERSIONING) # 버저닝 시각
 
@@ -259,11 +282,8 @@ def check_periodic_create_date(ws, row, cadence=DEFAULT_PERIODIC_CADENCE, anchor
 # ── 이벤트성 산출물 Create Date 검사 ──────────────────────────────────────────
 
 def check_eventbased_create_date(ws, row):
-    tracker_name_raw = get_cell_value(ws, row, COL_TRACKER_NAME)
-    pure_name = strip_process_tag(tracker_name_raw)
-
     # 이벤트성 산출물이 아니면 스킵
-    if pure_name not in EVENTBASED_TRACKERS:
+    if not is_eventbased(ws, row):
         return None
 
     status = get_cell_value(ws, row, COL_STATUS)
@@ -290,7 +310,19 @@ PR_ID_SPLIT_RE = re.compile(r"[\s,]+")
 
 PR_IN_DESC_RE = re.compile(r"\bPR[^\d]*?(\d+)", re.IGNORECASE) # 하이픈 유무와 무관하게 PR 뒤에 오는 첫 숫자를 PR 번호로 인식 (PR-04, PR~-04, PR04, PR 04 모두 허용)
 
+DOC_HISTORY_EXEMPT_SUFFIXES = ("Test Result", "Review Result")  # 이 접미사로 끝나는 트래커는 문서 이력 기술 규칙 대상이 아니다
+
 def check_doc_history_rule(ws, row):
+    if is_eventbased(ws, row):
+        # Released/Read Only + Create Date 워크플로우를 쓰는 트래커는 현재 상태가 무엇이든
+        # (Open이라도 결국 그 워크플로우로 가는 종류라면) 이 규칙 대상이 아니다
+        return None
+
+    tracker_name_raw = get_cell_value(ws, row, COL_TRACKER_NAME)
+    pure_name = strip_process_tag(tracker_name_raw)
+    if any(name_ends_with(pure_name, suffix) for suffix in DOC_HISTORY_EXEMPT_SUFFIXES):
+        return None
+
     status = get_cell_value(ws, row, COL_STATUS)
 
     if status == 'Approved': # Approved 상태의 버전은 문서 이력 기술 규칙 전체를 검사하지 않는다(26.06.08)
@@ -329,10 +361,25 @@ UPLOAD_TRUE_STATUSES  = {"Approved", "Internal Baselined", "Gate Baselined", "Wa
 UPLOAD_FALSE_STATUSES = {"In Review", "Open"}
 
 def check_status_rule(ws, row):
-    tracker_name_raw = get_cell_value(ws, row, COL_TRACKER_NAME)
-    if strip_process_tag(tracker_name_raw) in EVENTBASED_TRACKERS:
+    if is_eventbased(ws, row):
         # 이벤트성 산출물은 Released/Read Only + Create Date 워크플로우를 쓰므로
         # 이 규칙(Waiting for Approval 전후 상태 검사) 대상이 아니다
+        return None
+
+    tracker_name_raw = get_cell_value(ws, row, COL_TRACKER_NAME)
+    if name_ends_with(strip_process_tag(tracker_name_raw), "Test Result"):
+        # Test Result는 상태 체계 자체가 달라 이 규칙 대신 check_review_report_version_rule에서
+        # "실제 완료일과 Review Report에 기재된 완료일이 일치하는지"로 같은 취지를 검사한다
+        return None
+
+    item_count_raw = get_cell_value(ws, row, COL_ITEM_COUNT)
+    try:
+        item_count = int(float(item_count_raw)) if item_count_raw else 0
+    except ValueError:
+        item_count = 0
+    if item_count == 0:
+        # 트래커에 아직 아무 것도(리뷰레포트도, 산출물 자체도) 등록되지 않은 경우 - 시작 전이라 검사 대상 아님
+        # (등록된 아이템이 없으니 "현재 상태"가 기본값 "Open"으로 잡혀서 잘못 NG가 되는 걸 방지)
         return None
 
     upload_raw = get_cell_value(ws, row, 15)  # O열: 리뷰레포트 업로드 여부
@@ -362,8 +409,32 @@ def check_status_rule(ws, row):
 
 def check_review_report_version_rule(ws, row):
     """산출물이 Approved 상태일 때, Review Report에 기재된 대상 문서 버전이
-    실제 현재 버전과 일치하는지 확인한다. (최신 버전에 대한 리뷰 없이 승인되는 것을 방지)"""
+    실제 현재 버전과 일치하는지 확인한다. (최신 버전에 대한 리뷰 없이 승인되는 것을 방지)
+
+    Test Result 트래커는 "버전" 개념이 없으므로, 같은 취지를 "실제로 Finished/Closed된
+    날짜"와 "Review Report에 기재된 대상 날짜(YYMMDD)"가 일치하는지로 검사한다. 이렇게 하면
+    한 번 리뷰받고 다시 열어(Ready for execution 등) 재작업한 뒤 다시 Finished/Closed 됐는데
+    Review Report가 그 이전 날짜 그대로 남아있는 경우를 잡아낸다."""
+    tracker_name_raw = get_cell_value(ws, row, COL_TRACKER_NAME)
+    is_test_result = name_ends_with(strip_process_tag(tracker_name_raw), "Test Result")
     status_raw = get_cell_value(ws, row, COL_STATUS)
+
+    if is_test_result:
+        if status_raw not in ("Finished", "Closed"):
+            return None
+
+        actual_date = get_cell_value(ws, row, COL_TEST_RESULT_CLOSED_DATE)
+        target_date = get_cell_value(ws, row, COL_TARGET_VERSION)
+        if not actual_date or not target_date:
+            # 실제 완료일을 못 구했거나, 리뷰레포트가 없거나 대상 날짜를 자동 인식하지 못한 경우
+            return None
+
+        if target_date.strip() != actual_date.strip():
+            reasons = [f"Review Report에 기재된 완료일({target_date})이 실제 완료일({actual_date})과 다름"]
+            return (False, reasons, reasons)
+
+        return (True, [], [])
+
     if status_raw != 'Approved':
         return None
 
@@ -459,6 +530,40 @@ def _build_summary_sheet(wb, detail_ws, row_details=None):
     wb.active = wb.sheetnames.index("요약")  # 파일을 열었을 때 요약 시트가 먼저 보이도록
 
 
+def _build_ng_detail_sheet(wb, detail_ws, row_details):
+    """NG가 하나라도 난 산출물만, 트래커명/담당자/상세 사유(codebeamer엔 안 나가는 구체적 근거)로
+    간결하게 보여주는 시트. 정보가 너무 많은 "데이터" 시트 대신 NG만 빠르게 훑어보기 위한 용도."""
+    if "상세" in wb.sheetnames:
+        del wb["상세"]
+    ws = wb.create_sheet("상세")
+    ws.append(["트래커명", "담당자", "NG 상세 사유"])
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="C0392B")
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for row, details in row_details.items():
+        tracker_name = get_cell_value(detail_ws, row, COL_TRACKER_NAME)
+        owner = get_cell_value(detail_ws, row, COL_OWNER)
+        detail_pretty = "\n".join(f"- {d.strip()}" for d in details if d.strip())
+
+        ws.append([tracker_name, owner, detail_pretty])
+        out_row = ws.max_row
+        cell = ws.cell(row=out_row, column=3)
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+        if detail_pretty:
+            ws.row_dimensions[out_row].height = 14 * (detail_pretty.count("\n") + 1) + 8
+
+    for i, width in enumerate([40, 14, 70], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+
+
 def _build_version_check_failure_sheet(wb, failures):
     """Approved 상태인데 Review Report에서 대상 버전을 자동으로 읽지 못한 항목을
     별도 시트로 안내한다 - 잘못 판정하는 대신 사람이 직접 확인하도록."""
@@ -492,7 +597,7 @@ def run(file_path: str, periodic_cadence: str = DEFAULT_PERIODIC_CADENCE, period
     print(f"\n파일 로딩 중: {file_path}")
     wb = load_workbook(file_path)
     ws = wb.active
-    ws.title = "상세"
+    ws.title = "데이터"  # 원본 재료 데이터 + 규칙 결과(1/2). "상세"는 NG 상세 사유만 보여주는 별도 시트로 따로 만든다.
 
     save_ok = save_ng = save_skip = 0
     ver_ok = ver_ng = ver_skip = 0
@@ -621,10 +726,14 @@ def run(file_path: str, periodic_cadence: str = DEFAULT_PERIODIC_CADENCE, period
         review_ver_result = check_review_report_version_rule(ws, row)
         if review_ver_result is None:
             review_ver_skip += 1
-            # Approved인데 리뷰 대상 버전을 자동으로 못 읽은 경우만 "판정 불가" 목록에 안내
+            # Approved(또는 Test Result의 Finished/Closed)인데 리뷰 대상 버전/날짜를
+            # 자동으로 못 읽은 경우만 "판정 불가" 목록에 안내
             status_raw = get_cell_value(ws, row, COL_STATUS)
             fail_reason = get_cell_value(ws, row, COL_VERSION_CHECK_FAIL_REASON)
-            if status_raw == 'Approved' and fail_reason:
+            tracker_name_raw = get_cell_value(ws, row, COL_TRACKER_NAME)
+            is_test_result = name_ends_with(strip_process_tag(tracker_name_raw), "Test Result")
+            approved_like = status_raw in ("Finished", "Closed") if is_test_result else status_raw == 'Approved'
+            if approved_like and fail_reason:
                 version_check_failures.append({
                     "트래커명": get_cell_value(ws, row, COL_TRACKER_NAME),
                     "사유": fail_reason,
@@ -658,6 +767,7 @@ def run(file_path: str, periodic_cadence: str = DEFAULT_PERIODIC_CADENCE, period
             row_details[row] = detail_ng_reasons
 
     _build_summary_sheet(wb, ws, row_details)
+    _build_ng_detail_sheet(wb, ws, row_details)
     _build_version_check_failure_sheet(wb, version_check_failures)
     wb.save(file_path)
 

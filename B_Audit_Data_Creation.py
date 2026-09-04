@@ -3,6 +3,7 @@ from requests.auth import HTTPBasicAuth
 import pandas as pd
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from tqdm import tqdm
 from pathlib import Path
 
@@ -33,13 +34,29 @@ def _find_enclosing_table(comment_text, marker_pos):
     return None  # 닫히지 않은 표 (형식 이상)
 
 
-def extract_target_version_from_comment(comment_text):
+_TEST_RESULT_TRAILING_QUALIFIER_RE = re.compile(r"(\s*\([^)]*\))+$")
+_PROCESS_TAG_RE = re.compile(r"^\[[A-Z]+\.\d+[A-Z]?\]")  # [SAF.2]Functional Safety Audit Report -> [SAF.2]
+
+
+def _strip_process_tag(name):
+    return _PROCESS_TAG_RE.sub("", name or "").strip()
+
+
+def _normalize_name_for_row_match(name):
+    """표 행 매칭용 정규화: 공백/하이픈/언더스코어 표기 차이는 무시하고 비교한다."""
+    return re.sub(r"[\s\-_]+", "", name or "").lower()
+
+
+def extract_target_version_from_comment(comment_text, tracker_name):
     """Review Report PA 아이템의 코멘트(자유 텍스트 Wiki 표)에서 "리뷰 대상 문서명" 표에 적힌
-    대상 문서 버전을 추출한다. 작성자마다 표 형식이 달라(버전에 'v' 접두사가 있거나 없거나)
-    완벽한 파싱은 불가능하므로, 실패 시에는 억지로 판정하지 않고 사유를 같이 반환해 사람이
+    tracker_name과 같은 행(row)의 값(버전, 또는 Test Result의 경우 대상 완료일 YYMMDD 6자리)을
+    추출한다. 하나의 Review Report가 대상 산출물을 2개 이상(예: Test Result 실행 결과 + 별도
+    Test Report 문서) 같이 다루는 경우가 있어서, 표에 적힌 값 아무거나 줍는 게 아니라 행 단위로
+    문서명을 매칭해 정확히 짝을 맞춰야 한다. 작성자마다 표 형식이 달라(버전에 'v' 접두사가 있거나
+    없거나) 완벽한 파싱은 불가능하므로, 실패 시에는 억지로 판정하지 않고 사유를 같이 반환해 사람이
     직접 확인하도록 한다.
 
-    반환: (버전 문자열 또는 None, 실패 사유 또는 None)
+    반환: (버전 또는 YYMMDD 날짜 문자열 또는 None, 실패 사유 또는 None)
     """
     if not comment_text:
         return None, "리뷰 코멘트가 비어있음"
@@ -56,14 +73,47 @@ def extract_target_version_from_comment(comment_text):
         return None, "표 구조를 인식하지 못함"
     section = comment_text[table_bounds[0]:table_bounds[1]]
 
-    # codebeamer Wiki 서식: %%(color:rgb(r,g,b);...)내용%! 형태로 셀 내용이 감싸져 있음
-    spans = re.findall(r"%%\(color:rgb\([^)]*\)[^)]*\)([^%]+)%!", section)
-    cleaned = [s.strip().strip("\\").strip() for s in spans]
-    versions = [s for s in cleaned if re.fullmatch(r"v?\d+(\.\d+)+", s, re.IGNORECASE)]
-    if not versions:
-        return None, "버전 값을 인식하지 못함"
+    # codebeamer Wiki 서식: %%(color:rgb(r,g,b);...)내용%! 형태로 셀 내용(버전/날짜)만 색이
+    # 입혀져 있고, 문서명은 그 앞에 일반 텍스트로 적혀있다 (표 한 행 = 문서명 + 색 입힌 값)
+    value_spans = list(re.finditer(r"%%\(color:rgb\([^)]*\)[^)]*\)([^%]+)%!", section))
+    if not value_spans:
+        return None, "버전(또는 날짜) 값을 인식하지 못함"
 
-    return versions[-1].lstrip("vV"), None
+    target_norm = _normalize_name_for_row_match(
+        _TEST_RESULT_TRAILING_QUALIFIER_RE.sub("", _strip_process_tag(tracker_name))
+    )
+    if not target_norm:
+        return None, "대상 트래커명을 알 수 없음"
+
+    prev_end = 0
+    for m in value_spans:
+        name_chunk = section[prev_end:m.start()]
+        prev_end = m.end()
+        if target_norm in _normalize_name_for_row_match(name_chunk):
+            value = m.group(1).strip().strip("\\").strip()
+            if re.fullmatch(r"v?\d+(\.\d+)+", value, re.IGNORECASE) or re.fullmatch(r"\d{6}", value):
+                return value.lstrip("vV"), None
+            return None, f"'{value}' 형식을 인식하지 못함"
+
+    return None, "표에서 이 산출물과 일치하는 행을 찾지 못함"
+
+
+def _is_test_result_tracker(name):
+    """이름 끝의 '(MCU)', '(AP)' 같은 괄호 한정자는 무시하고 'Test Result'로 끝나는지 확인한다."""
+    if not name:
+        return False
+    stripped = _TEST_RESULT_TRAILING_QUALIFIER_RE.sub("", name).strip()
+    return stripped.endswith("Test Result")
+
+
+def _to_yymmdd(iso_datetime_str):
+    """codebeamer의 ISO 8601 날짜/시각 문자열을 YYMMDD 6자리로 변환한다. 실패 시 빈 문자열."""
+    if not iso_datetime_str:
+        return ""
+    try:
+        return datetime.fromisoformat(iso_datetime_str.replace("Z", "+00:00")).strftime("%y%m%d")
+    except Exception:
+        return ""
 
 def Audit_Data_Creation(BASE_URL, BASE_URL_V3, USERNAME, PASSWORD, PROJECT_NAME, TRACKER_NAME_CIL, TRACKER_NAME_NCL):
     session = requests.Session()
@@ -220,6 +270,24 @@ def Audit_Data_Creation(BASE_URL, BASE_URL_V3, USERNAME, PASSWORD, PROJECT_NAME,
             except Exception:
                 return []
         
+        _eventbased_cache = {}
+
+        def is_eventbased_workflow(tracker_uri):
+            """트래커의 status 필드가 가질 수 있는 값(enum) 안에 'Create Date'가 있으면
+            Release/Read Only + Create Date 워크플로우를 쓰는 이벤트성 트래커로 판별한다.
+            이름 목록에 의존하지 않고 실제 워크플로우 정의로 직접 확인하는 방식."""
+            if tracker_uri in _eventbased_cache:
+                return _eventbased_cache[tracker_uri]
+            tracker_id = tracker_uri.rstrip('/').split('/')[-1]
+            try:
+                schema = session.get(f"{BASE_URL}/tracker/{tracker_id}/schema").json()
+                statuses = schema.get('properties', {}).get('status', {}).get('enum', [])
+                result = any(s.get('name') == 'Create Date' for s in statuses)
+            except Exception:
+                result = False
+            _eventbased_cache[tracker_uri] = result
+            return result
+
         def process_row_parallel(index, df_merged, latest_baselines):
             """최종 감사 리포트 행 처리 (병렬용)"""
             row = df_merged.iloc[index]
@@ -232,14 +300,15 @@ def Audit_Data_Creation(BASE_URL, BASE_URL_V3, USERNAME, PASSWORD, PROJECT_NAME,
 
             tracker = session.get(f"https://codebeamer.slworld.com/cb/rest{uri}").json() # 1. 트래커의 타입 2. 트래커의 이름
             tracker_item = session.get(f"https://codebeamer.slworld.com/cb/rest{uri}/items").json() # PA를 찾고, 1. 최초 작성 2. 최근 수정 3. 상태
-            
+            t_name = tracker.get("name", "")
+
             rr_data = {"num": "해당없음", "time": "해당없음", "status": "해당없음", "is_upload": "해당없음", "target_version": "", "version_check_fail_reason": ""} # Review Report의 1. 개수 2. 제출 시간 3. 상태 4. 작성 여부 5. 기재된 대상 문서 버전
             if rr_uri:
                 rr_resp = session.get(f"https://codebeamer.slworld.com/cb/rest{rr_uri}/items").json()
                 items = rr_resp.get('items', [])
 
                 if items:
-                    pa_item = next((item for item in items if item.get('type', {}).get('name') == 'Primary Attribute'), None)
+                    pa_item = next((item for item in items if (item.get('type') or {}).get('name') == 'Primary Attribute'), None)
                     rr_status = pa_item.get('status', {}).get('name', "") if pa_item else ""
 
                     target_version, version_check_fail_reason = "", "리뷰레포트 PA 아이템 없음"
@@ -248,7 +317,7 @@ def Audit_Data_Creation(BASE_URL, BASE_URL_V3, USERNAME, PASSWORD, PROJECT_NAME,
                         if comments_resp.status_code == 200:
                             comments = comments_resp.json()
                             combined_text = " ".join(c.get('comment', '') or '' for c in comments if isinstance(c, dict))
-                            target_version, version_check_fail_reason = extract_target_version_from_comment(combined_text)
+                            target_version, version_check_fail_reason = extract_target_version_from_comment(combined_text, t_name)
                             target_version = target_version or ""
                             version_check_fail_reason = version_check_fail_reason or ""
                         else:
@@ -266,23 +335,36 @@ def Audit_Data_Creation(BASE_URL, BASE_URL_V3, USERNAME, PASSWORD, PROJECT_NAME,
                     rr_data = {"num": 0, "time": "", "status": "", "is_upload": False, "target_version": "", "version_check_fail_reason": ""}
             
             items = tracker_item.get('items', [])
-            pa_ids = [item['id'] for item in items if item.get('type', {}).get('name') == 'Primary Attribute']
-            
+            pa_item_obj = next((item for item in items if (item.get('type') or {}).get('name') == 'Primary Attribute'), None)
+            if pa_item_obj is None:
+                # Test Result처럼 'Primary Attribute' 타입이 아예 없는 트래커는, 부모가 없는
+                # (codebeamer 화면상 Parent가 "--") 최상위 워크아이템이 그 트래커의 대표(PA 역할) 아이템이다
+                pa_item_obj = next((item for item in items if not item.get('parent')), None)
+            pa_ids = [pa_item_obj['id']] if pa_item_obj else []
+
             pa_history = None
             if pa_ids:
                 pa_history = session.get(f"https://codebeamer.slworld.com/cb/rest/item/{pa_ids[0]}/history").json()
-            
+
             t_type = tracker.get("type", {}).get("name", "")
-            t_name = tracker.get("name", "")
-            
+
             base = latest_baselines.get(t_name, {}) # 1. 버전 종류 2. 버전 3. 버전 설명 4. 버저닝 시각 5. 담당자
-            
-            h_info = {"first": "", "last": "", "status": "Open", "waiting": pd.NA, "create_date_current": False}
+
+            # 히스토리에서 상태 변경 기록을 못 찾는 트래커(로그 방식이 다름)가 있어서, 히스토리를 추론하는
+            # 대신 PA 아이템 자체의 현재 status 필드를 그대로 쓴다 (리뷰레포트 상태와 동일한 방식)
+            current_status = pa_item_obj.get('status', {}).get('name') if pa_item_obj else None
+
+            # Test Result는 "버전"이 아니라 실제로 Finished/Closed된 날짜를 Review Report 기재
+            # 날짜와 비교하므로, 대표 아이템의 종료일(codebeamer의 "Closed At" 필드)을 YYMMDD로 뽑아둔다
+            is_test_result = _is_test_result_tracker(row.get("트래커명", ""))
+            test_result_closed_date = (
+                _to_yymmdd(pa_item_obj.get('closedAt')) if (is_test_result and pa_item_obj) else ""
+            )
+
+            h_info = {"first": "", "last": "", "status": current_status or "Open", "waiting": pd.NA, "create_date_current": False}
             if pa_history:
                 h_info["first"] = pa_history[0].get('submittedAt', '')
                 h_info["last"] = pa_history[-1].get('submittedAt', '')
-                h_info["status"] = next((c['newValue']['name'] for h in reversed(pa_history) for c in h.get('changes', [])
-                                        if c.get('field') == 'status' and isinstance(c.get('newValue'), dict)), "Open")
                 if rr_data["num"] != "해당없음":
                     h_info["waiting"] = True if h_info["status"] in ["Open", "In Review"] else (False if h_info["status"] in ["Waiting for Approval", "Approved"] else "")
                 # Create Date는 누르는 즉시 이전 상태(Released/Read Only)로 자동 복귀("back")하기 때문에
@@ -312,7 +394,9 @@ def Audit_Data_Creation(BASE_URL, BASE_URL_V3, USERNAME, PASSWORD, PROJECT_NAME,
                 "담당자": base.get("담당자", ""),
                 "Create Date 최신 여부": h_info["create_date_current"],
                 "리뷰레포트 기재 버전": rr_data["target_version"],
-                "버전 확인 실패 사유": rr_data["version_check_fail_reason"]
+                "버전 확인 실패 사유": rr_data["version_check_fail_reason"],
+                "이벤트성 여부": is_eventbased_workflow(uri),
+                "Test Result 종료일": test_result_closed_date,
             }
 
         

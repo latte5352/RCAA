@@ -5,3 +5,6 @@ backend/job_data/
 backend/history_data/
 *.xlsx
 history_*.json
+tracker_*_items.json
+item_*_detail.json
+item_*_history.json

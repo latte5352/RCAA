@@ -157,7 +157,10 @@ def list_unregistered_trackers(job_id):
         return []
     df = pd.read_excel(unregistered_file)
     return [
-        {"tracker_name": row["트래커명"], "tracker_uri": row["TRACKER_uri"]}
+        {
+            "tracker_name": row["트래커명"],
+            "tracker_uri": row["TRACKER_uri"] if pd.notna(row["TRACKER_uri"]) else None,
+        }
         for _, row in df.iterrows()
     ]
 
@@ -171,7 +174,10 @@ def list_version_check_failures(job_id):
         raise JobError(f"아직 검토할 결과가 없습니다 (현재 상태: {job['status']}).")
     df = pd.read_excel(job["result_file"], sheet_name="판정불가")
     return [
-        {"tracker_name": row["트래커명"], "reason": row["사유"]}
+        {
+            "tracker_name": row["트래커명"] if pd.notna(row["트래커명"]) else "",
+            "reason": row["사유"] if pd.notna(row["사유"]) else "",
+        }
         for _, row in df.iterrows()
     ]
 
