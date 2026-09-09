@@ -29,6 +29,10 @@ function extractCurrentSnapshot(records) {
 /**
  * 직전 스냅샷과 비교해 신규/변경 목록을 반환하고, 스냅샷을 이번 결과로 갱신한다.
  * job(감사 실행)당 정확히 한 번만 호출해야 한다 (반복 호출하면 두 번째부터는 항상 "변경 없음").
+ *
+ * records가 프로젝트의 트래커 전체가 아니라 일부(특정 트래커만 골라 감사한 경우)여도 안전하도록,
+ * 스냅샷은 통째로 교체하지 않고 이번에 감사한 트래커분만 병합해 덮어쓴다 - 그래야 감사하지
+ * 않은 나머지 트래커의 "지난 감사" 기준이 다음 전체 감사 때까지 사라지지 않는다.
  */
 export async function diffAndUpdateHistory(projectName, records) {
   const previous = await loadSnapshot(projectName);
@@ -54,7 +58,7 @@ export async function diffAndUpdateHistory(projectName, records) {
   }
   changedTrackers.sort((a, b) => a.trackerName.localeCompare(b.trackerName));
 
-  await saveSnapshot(projectName, current);
+  await saveSnapshot(projectName, { ...previous, ...current });
 
   return { newTrackers, changedTrackers };
 }

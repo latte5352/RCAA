@@ -14,12 +14,29 @@
   #progressWrap { margin-top: 10px; }
   #step { font-size: 12px; margin-top: 6px; color: #555; }
   #logoutBtn { margin-top: 10px; background: none; border: none; color: #888; font-size: 11px; text-decoration: underline; }
+  #lastAuditInfo { font-size: 11px; color: #666; margin-bottom: 6px; }
+  #viewLastBtn { background: #f4f4f4; margin-bottom: 8px; }
   #projectPicker { position: relative; margin-bottom: 8px; }
   #projectSearchInput { width: 100%; box-sizing: border-box; padding: 6px; margin-bottom: 0; }
   #projectDropdownList { position: absolute; left: 0; right: 0; top: 100%; z-index: 10; max-height: 220px; overflow-y: auto; background: #fff; border: 1px solid #ccc; border-top: none; border-radius: 0 0 4px 4px; box-shadow: 0 4px 8px rgba(0,0,0,.1); }
   .project-option { padding: 6px 8px; font-size: 12px; cursor: pointer; }
   .project-option:hover, .project-option.active { background: #eef4fe; }
   .project-option-empty { padding: 6px 8px; font-size: 12px; color: #888; }
+  #trackerPicker { margin-bottom: 4px; }
+  #trackerSearchInput { width: 100%; box-sizing: border-box; padding: 6px; margin-bottom: 6px; }
+  #trackerListBox { max-height: 200px; overflow-y: auto; background: #fff; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 6px; }
+  .tracker-option { padding: 6px 8px; font-size: 12px; cursor: pointer; white-space: normal; word-break: break-all; border-bottom: 1px solid #f0f0f0; }
+  .tracker-option:last-child { border-bottom: none; }
+  .tracker-option:hover { background: #eef4fe; }
+  .tracker-option.checked { background: #eaf7ec; color: #1e7e34; font-weight: 600; }
+  #trackerBulkButtons { display: flex; gap: 6px; margin-bottom: 8px; }
+  #trackerBulkButtons button { width: auto; flex: 1; font-size: 12px; padding: 6px; }
+  #trackerSelectionSummary { font-size: 11px; color: #555; margin: 0 0 8px; line-height: 1.5; }
+  #cmRoleWarning { font-size: 11px; margin: 0 0 8px; padding: 6px 8px; border-radius: 4px; line-height: 1.5; }
+  #cmRoleWarning.role-missing { background: #fdecea; color: #c0392b; }
+  #cmRoleWarning.role-ok { background: #eaf7ec; color: #1e7e34; }
+  #cmRoleWarning.role-unknown { background: #f4f4f4; color: #888; }
+  #projectFilterNote { font-size: 11px; color: #888; margin: -4px 0 8px; }
 </style>
 </head>
 <body>
@@ -38,6 +55,17 @@
       <input type="text" id="projectSearchInput" placeholder="프로젝트 검색...">
       <div id="projectDropdownList" class="hidden"></div>
     </div>
+    <div id="projectFilterNote" class="hidden"></div>
+    <div id="trackerPicker">
+      <input type="text" id="trackerSearchInput" placeholder="트래커 검색...">
+      <div id="trackerBulkButtons" class="hidden">
+        <button id="trackerSelectAllBtn" type="button">전체 선택</button>
+        <button id="trackerSelectNoneBtn" type="button">전체 해제</button>
+      </div>
+      <div id="trackerListBox" class="hidden"></div>
+    </div>
+    <div id="trackerSelectionSummary" class="hidden"></div>
+    <div id="cmRoleWarning" class="hidden"></div>
     <select id="cadenceSelect">
       <option value="weekly">매주</option>
       <option value="biweekly" selected>2주</option>
@@ -53,7 +81,9 @@
       <option value="6">일요일</option>
     </select>
     <select id="dayOfMonthSelect" class="hidden"></select>
-    <button id="runBtn">감사 실행</button>
+    <div id="lastAuditInfo" class="hidden"></div>
+    <button id="viewLastBtn" class="hidden" type="button">직전 감사 결과 보기</button>
+    <button id="runBtn">새 감사 시작</button>
     <div id="step"></div>
     <button id="logoutBtn">로그아웃</button>
   </div>

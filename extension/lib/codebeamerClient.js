@@ -27,6 +27,20 @@ export function createClient({ baseUrl, baseUrlV3, username, password }) {
     }
   }
 
+  /**
+   * JSON REST API가 아니라 화면 렌더링용 HTML을 돌려주는 내부 엔드포인트(.spr 등) 조회용.
+   * 실패해도 예외를 던지지 않고 {ok, status, text} 형태로 반환한다.
+   */
+  async function getTextSoft(url) {
+    try {
+      const res = await fetch(url, { headers: { Authorization: authHeader } });
+      if (!res.ok) return { ok: false, status: res.status, text: null };
+      return { ok: true, status: res.status, text: await res.text() };
+    } catch (e) {
+      return { ok: false, status: null, text: null };
+    }
+  }
+
   async function putJson(url, body) {
     const res = await fetch(url, {
       method: "PUT",
@@ -73,7 +87,7 @@ export function createClient({ baseUrl, baseUrlV3, username, password }) {
     return { items: allItems, incomplete };
   }
 
-  return { baseUrl, baseUrlV3, getJson, getJsonSoft, putJson, fetchAllItems };
+  return { baseUrl, baseUrlV3, getJson, getJsonSoft, getTextSoft, putJson, fetchAllItems };
 }
 
 /**

@@ -4,7 +4,8 @@
 
 import { mapWithConcurrency } from "./codebeamerClient.js";
 import { parseBaselineData, buildLatestBaselines } from "./baselines.js";
-import { extractTargetVersionFromComment, isDateBasedTracker, stripTrailingQualifier, toYYMMDD } from "./wikiTable.js";
+import { extractTargetVersionFromComment, isDateBasedTracker, stripTrailingQualifier, normalizeNameForRowMatch, extractProcessTag, toYYMMDD } from "./wikiTable.js";
+import { TRACKERS_EXEMPT_FROM_ITEM_LIST, TRACKER_NAME_ALIASES } from "./config.js";
 
 const TRAILING_QUALIFIER_RE = /(\s*\([^)]*\))+$/; // 이름 끝의 "(MCU)", "(AP)" 같은 한정자
 
@@ -42,29 +43,48 @@ function parseCilData(items) {
 /**
  * CIL 목록과 프로젝트의 트래커/카테고리 목록을 이름으로 아우터 조인한다.
  * - CIL엔 있는데 트래커/카테고리 쪽에 없으면: 그대로(트래커 URI는 CIL의 workItem에서 옴)
- * - 트래커/카테고리엔 있는데 CIL에 없으면: "미등재"로 분리 (감사 대상에서 빠짐)
+ * - 트래커/카테고리엔 있는데 CIL에 없으면: "미등재"로 분리 (감사 대상에서 빠짐) - 단
+ *   TRACKERS_EXEMPT_FROM_ITEM_LIST에 있는 이름(NCL, Change Order/Request, Urgent Issue,
+ *   CIL 자기 자신 등 원래 Item List 등재 대상이 아닌 트래커)은 미등재 목록에서 제외한다.
+ *   Review Report/Audit Report는 보조 트래커라도 Item List에 등재돼 있어야 하므로 예외 없음.
+ * - 이름 매칭은, 먼저 CIL 쪽 이름 앞에 흔히 붙는 "[SUP8_CIL-123456]" 같은 자동 생성 ID
+ *   접두어를 트래커 쪽과 마찬가지로 떼어내고, 뜻이 다른 이름을 표기 차이(TRACKER_NAME_ALIASES)로
+ *   정규화한 뒤, 공백/하이픈/언더스코어 유무·대소문자 차이는 무시하고 비교한다
+ *   (normalizeNameForRowMatch - 화면상 거의 안 보이는 "괄호 앞 공백 하나 있고 없고" 같은 차이
+ *   때문에 등재된 산출물이 미등재로 잘못 잡히는 걸 막기 위함). 단수/복수, 명사/형용사 등 그
+ *   외의 단어 차이(Requirement/Requirements, Function/Functional 등)는 예외 없이 다른
+ *   이름으로 취급한다 - 진짜 등재명이 다르면 미등재로 잡혀야 한다는 확인에 따른 것.
  * - 둘 다 있으면: 병합, TRACKER_uri가 비어있으면 트래커/카테고리 쪽 uri로 채움
  */
+function normalizeJoinName(name) {
+  // CIL 아이템 이름 앞에 "[SUP8_CIL-123456]" 같은 자동 생성 ID 접두어가 붙어있는 경우가
+  // 있어서, 트래커/카테고리 쪽과 마찬가지로 대괄호 태그를 뗀다(이미 안 붙어있으면 그대로).
+  const base = stripBracketTag(TRACKER_NAME_ALIASES[name] || name || "");
+  return normalizeNameForRowMatch(base);
+}
+
 function mergeCilWithTrackers(cilRows, trackers, categories) {
   const tagged = [];
   for (const item of [...trackers, ...categories]) {
     if (BRACKET_TAG_RE.test(item.name || "")) {
-      tagged.push({ name: stripBracketTag(item.name), uri: item.uri });
+      tagged.push({ name: stripBracketTag(item.name), uri: item.uri, processTag: extractProcessTag(item.name) });
     }
   }
 
   const mergedByName = new Map();
   for (const cilRow of cilRows) {
-    mergedByName.set(cilRow.trackerName, { ...cilRow });
+    mergedByName.set(normalizeJoinName(cilRow.trackerName), { ...cilRow, processTag: extractProcessTag(cilRow.trackerName) });
   }
-  for (const { name, uri } of tagged) {
-    if (mergedByName.has(name)) {
-      const row = mergedByName.get(name);
+  for (const { name, uri, processTag } of tagged) {
+    const joinName = normalizeJoinName(name);
+    if (mergedByName.has(joinName)) {
+      const row = mergedByName.get(joinName);
       if (!row.trackerUri) row.trackerUri = uri;
+      if (!row.processTag && processTag) row.processTag = processTag;
     } else {
-      mergedByName.set(name, {
+      mergedByName.set(joinName, {
         cilId: null, cilUri: null, trackerName: name, trackerConnected: "X",
-        trackerUri: uri, prIdList: [], status: null,
+        trackerUri: uri, prIdList: [], status: null, processTag,
       });
     }
   }
@@ -85,10 +105,12 @@ function mergeCilWithTrackers(cilRows, trackers, categories) {
   };
 
   const registered = dedupeByUri(registeredRaw);
-  const unregistered = dedupeByUri(unregisteredRaw).map((r) => ({
-    trackerName: r.trackerName,
-    trackerUri: r.trackerUri,
-  }));
+  const unregistered = dedupeByUri(unregisteredRaw)
+    .filter((r) => !TRACKERS_EXEMPT_FROM_ITEM_LIST.includes(r.trackerName))
+    .map((r) => ({
+      trackerName: r.trackerName,
+      trackerUri: r.trackerUri,
+    }));
 
   return { registered, unregistered };
 }
@@ -310,11 +332,11 @@ async function processTrackerRow(client, mergedRow, ctx) {
   };
 }
 
-/**
- * 감사 대상 데이터 전체를 codebeamer에서 수집한다.
- * @returns {{records: Array, unregisteredTrackers: Array<{trackerName, trackerUri}>}}
- */
-export async function collectAuditData(client, { projectName, trackerCil, trackerNcl }) {
+// CIL/트래커/카테고리를 조인해서 프로젝트의 감사 대상 트래커 행(processTrackerRow 전 단계)을
+// 만든다. collectAuditData와 listRegisteredTrackerNames가 이 앞부분을 공유한다 - 트래커
+// 이름만 필요한 side panel의 트래커 선택 목록도, 이 무거운 per-tracker 조회(processTrackerRow)
+// 전까지만 실행하면 충분히 가볍게 얻을 수 있다.
+async function loadMergedTrackerRows(client, { projectName, trackerCil }) {
   const projectsResp = await client.getJson(`${client.baseUrl}/projects/page/1`);
   const project = (projectsResp.projects || []).find((p) => (p.name || "").includes(projectName));
   if (!project) throw new Error(`프로젝트를 찾을 수 없습니다: ${projectName}`);
@@ -330,7 +352,36 @@ export async function collectAuditData(client, { projectName, trackerCil, tracke
   const cilRows = parseCilData(cilItemsResult.items);
 
   const { registered, unregistered } = mergeCilWithTrackers(cilRows, allTrackers, allCategories);
+
+  return { userUri, allTrackers, registered, unregistered };
+}
+
+/** side panel의 트래커 선택 목록용 - 프로젝트에 등재된 트래커 이름만 가볍게 가져온다. */
+/** @returns {Promise<Array<{name: string, processTag: string}>>} */
+export async function listRegisteredTrackerNames(client, { projectName, trackerCil }) {
+  const { registered } = await loadMergedTrackerRows(client, { projectName, trackerCil });
+  return registered
+    .map((r) => ({ name: r.trackerName, processTag: r.processTag || "" }))
+    .sort((a, b) => a.name.localeCompare(b.name, "ko"));
+}
+
+/**
+ * 감사 대상 데이터를 codebeamer에서 수집한다. onlyTrackerNames를 주면(비어있지 않은 배열)
+ * 등재된 트래커 중 그 이름들만 실제 조회(processTrackerRow)하고, 나머지는 건드리지 않는다 -
+ * 특정 트래커만 골라서 감사할 때 불필요한 codebeamer 호출을 줄이기 위함이다. 리뷰레포트
+ * 조인맵/베이스라인/PR맵은 트래커 간에 서로 참조할 수 있어 항상 프로젝트 전체 기준으로 만든다.
+ * onProgress({ trackerName, status: "start"|"done", completed, total })를 주면 트래커 하나씩
+ * 조회를 시작/완료할 때마다 불러준다 - 화면에 진행 로그를 실시간으로 찍어 대기 시간을
+ * 덜 답답하게 하기 위함이다.
+ * @returns {{records: Array, unregisteredTrackers: Array<{trackerName, trackerUri}>, projectId: string}}
+ */
+export async function collectAuditData(client, { projectName, trackerCil, trackerNcl, onlyTrackerNames = null, onProgress = null }) {
+  const { userUri, allTrackers, registered, unregistered } = await loadMergedTrackerRows(client, { projectName, trackerCil });
   const reviewReportUriMap = buildReviewReportJoinMap(registered);
+
+  const targetRows = onlyTrackerNames && onlyTrackerNames.length
+    ? registered.filter((r) => onlyTrackerNames.includes(r.trackerName))
+    : registered;
 
   // 베이스라인
   const projectId = userUri.split("/").pop();
@@ -350,8 +401,15 @@ export async function collectAuditData(client, { projectName, trackerCil, tracke
   const isEventbasedWorkflow = makeEventBasedChecker(client);
   const ctx = { reviewReportUriMap, latestBaselines, prMap, isEventbasedWorkflow };
 
-  const results = await mapWithConcurrency(registered, 15, (row) => processTrackerRow(client, row, ctx));
+  let completed = 0;
+  const results = await mapWithConcurrency(targetRows, 15, async (row) => {
+    onProgress?.({ trackerName: row.trackerName, status: "start", completed, total: targetRows.length });
+    const result = await processTrackerRow(client, row, ctx);
+    completed += 1;
+    onProgress?.({ trackerName: row.trackerName, status: "done", completed, total: targetRows.length });
+    return result;
+  });
   const records = results.filter((r) => r !== null);
 
-  return { records, unregisteredTrackers: unregistered };
+  return { records, unregisteredTrackers: unregistered, projectId };
 }

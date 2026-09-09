@@ -45,6 +45,12 @@ function stripProcessTag(name) {
   return (name || "").replace(PROCESS_TAG_RE, "").trim();
 }
 
+/** 이름 맨 앞의 프로세스 태그만 괄호 없이 뽑는다. "[SUP.8]Foo" -> "SUP.8", 없으면 "". */
+function extractProcessTag(name) {
+  const m = PROCESS_TAG_RE.exec(name || "");
+  return m ? m[0].slice(1, -1) : "";
+}
+
 function stripTrailingQualifier(name) {
   return (name || "").replace(TRAILING_QUALIFIER_RE, "").trim();
 }
@@ -144,6 +150,7 @@ function toYYMMDD(isoDatetimeStr) {
 export {
   findEnclosingTable,
   stripProcessTag,
+  extractProcessTag,
   stripTrailingQualifier,
   normalizeNameForRowMatch,
   nameEndsWith,
