@@ -310,6 +310,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
     trackerType: tType,
     itemCount: items.length,
     fileName: tType === "Document" && items.length > 0 ? items[0].fileName || "" : "",
+    paItemName: paItemObj ? paItemObj.name || "" : "",
     firstEdit: hInfo.first,
     lastEdit: hInfo.last,
     status: hInfo.status,

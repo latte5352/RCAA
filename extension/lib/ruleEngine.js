@@ -91,15 +91,20 @@ export function computeNextPeriodicDue(lastCreateDateIso, cadence, anchor) {
 }
 
 // ── 저장 규칙 검사 ──────────────────────────────────────────────────────────
+// 파일이 첨부되는 트래커(Document 타입)면 실제 파일명을, 파일 첨부 없이 워크아이템 자체가
+// 산출물인 트래커(그 외 타입)면 대표 워크아이템(PA) 이름을 트래커명과 비교한다 - 뭐가 됐든
+// 워크아이템이 실제로 등록됐으면 이름이 맞는지는 확인해야 한다는 원칙에 따른 것. 아무 것도
+// 등록 안 된 경우(itemCount 0, 파일도 없음)만 진짜로 검사 대상이 아니다(null).
 export function checkSaveRule(record) {
   const trackerType = record.trackerType;
   const trackerName = record.trackerName;
   const itemCount = record.itemCount || 0;
   const fileName = record.fileName || "";
   const fileExists = hasFile(fileName);
+  const paItemName = record.paItemName || "";
 
   if (itemCount === 0 && !fileExists) return null;
-  if (!fileExists && trackerType !== "Document") return null;
+  if (!fileExists && !paItemName) return null; // 비교할 이름 자체가 없는 예외적인 경우
 
   const reasons = [];
   const detailReasons = [];
@@ -110,13 +115,15 @@ export function checkSaveRule(record) {
     detailReasons.push(reason);
   }
 
-  if (fileExists) {
-    const pureName = stripProcessTag(trackerName);
-    const fileStem = fileName.includes(".") ? fileName.slice(0, fileName.lastIndexOf(".")) : fileName;
-    if (normalizeForNamingCheck(pureName) !== normalizeForNamingCheck(fileStem)) {
-      reasons.push(`File Naming Rule 불일치 (실제 파일명: '${fileStem}')`);
-      detailReasons.push(`File Naming Rule 불일치 (트래커명: '${pureName}', 실제 파일명: '${fileStem}')`);
-    }
+  const pureName = stripProcessTag(trackerName);
+  const registeredName = fileExists
+    ? (fileName.includes(".") ? fileName.slice(0, fileName.lastIndexOf(".")) : fileName)
+    : paItemName;
+  const registeredLabel = fileExists ? "실제 파일명" : "실제 항목명";
+
+  if (normalizeForNamingCheck(pureName) !== normalizeForNamingCheck(registeredName)) {
+    reasons.push(`File Naming Rule 불일치 (${registeredLabel}: '${registeredName}')`);
+    detailReasons.push(`File Naming Rule 불일치 (트래커명: '${pureName}', ${registeredLabel}: '${registeredName}')`);
   }
 
   return { ok: reasons.length === 0, reasons, detailReasons };
@@ -151,9 +158,17 @@ export function checkVersionRule(record) {
 }
 
 // ── 주기적 활동 산출물 Create Date 검사 ─────────────────────────────────────
+// PERIODIC_TRACKERS 목록과 비교할 때 공백/언더스코어 차이는 무시한다(예: "Schedule Plan"과
+// "Schedule_Plan"을 같은 이름으로 봄) - 단 괄호 안 내용(예: "(실행본)")은 그대로 남기고
+// 비교하므로, 괄호 안 단어가 다르면 여전히 다른 산출물로 취급된다.
+function stripWhitespaceAndUnderscore(name) {
+  return (name || "").replace(/[\s_]+/g, "");
+}
+
 export function checkPeriodicCreateDate(record, cadence, anchor, periodicTrackers) {
-  const pureName = stripProcessTag(record.trackerName);
-  if (!periodicTrackers.has(pureName)) return null;
+  const pureName = stripWhitespaceAndUnderscore(stripProcessTag(record.trackerName));
+  const isPeriodic = [...periodicTrackers].some((t) => stripWhitespaceAndUnderscore(t) === pureName);
+  if (!isPeriodic) return null;
 
   const firstEditIso = parseDatetimeIso(record.firstEdit);
   if (!firstEditIso) return null; // 활동 자체가 없으면(아직 시작 안 한 산출물) 스킵
@@ -195,6 +210,9 @@ export function checkEventbasedCreateDate(record) {
 export function checkDocHistoryRule(record) {
   if (record.isEventBased) return null;
   if (isDateBasedTracker(record.trackerName)) return null;
+
+  const itemCount = record.itemCount || 0;
+  if (itemCount === 0) return null; // 아직 아무것도 등록 안 됨(파일 미업로드) - 시작 전이라 검사 대상 아님
 
   const status = record.status;
   if (status === "Approved") return null; // Approved 상태의 버전은 문서 이력 기술 규칙 전체를 검사하지 않는다
@@ -422,8 +440,14 @@ export function runAudit(records, options = {}) {
     }
 
     // codebeamer로 나가는 간결한 코멘트. NG가 하나도 없으면 비워둔다(원본 C_Audit.py와 동일하게,
-    // "이상 없음" 기본값은 이후 반영 단계에서 채운다 - D_Result_Update 상당 로직 참고).
-    record.comment = ngReasons.join(" / ");
+    // "이상 없음" 기본값은 이후 반영 단계에서 채운다 - D_Result_Update 상당 로직 참고). 다만
+    // 아무 것도 등록 안 돼서(itemCount 0) 규칙 검사가 전부 스킵된 경우는 "이상 없음"이라고 하면
+    // 마치 검사해서 통과한 것처럼 오해할 수 있어서, 감사 대상에서 제외됐다는 걸 명시한다.
+    if (ngReasons.length === 0 && (record.itemCount || 0) === 0) {
+      record.comment = "파일이 등재되지 않아 감사 대상에서 제외";
+    } else {
+      record.comment = ngReasons.join(" / ");
+    }
     record.detailComment = detailNgReasons;
   }
 

@@ -96,9 +96,10 @@ function handleCollectionProgress({ trackerName, status, completed, total }) {
   }
 }
 
-function badge(label, isNg) {
+function badge(label, ruleValue) {
   const span = document.createElement("span");
-  span.className = `badge ${isNg ? "ng" : "ok"}`;
+  const kind = ruleValue === 2 ? "ng" : ruleValue === 1 ? "ok" : "na"; // null = 해당 규칙 검사 대상 아님
+  span.className = `badge ${kind}`;
   span.textContent = label;
   return span;
 }
@@ -132,10 +133,10 @@ function renderItemsTable(records, excludedCilIds = new Set()) {
 
     const badgesCell = document.createElement("td");
     badgesCell.className = "col-badges";
-    badgesCell.appendChild(badge("저장", record.saveRule === 2));
-    badgesCell.appendChild(badge("버전", record.versionRule === 2));
-    badgesCell.appendChild(badge("이력", record.docHistoryRule === 2));
-    badgesCell.appendChild(badge("상태", record.statusRule === 2));
+    badgesCell.appendChild(badge("저장", record.saveRule));
+    badgesCell.appendChild(badge("버전", record.versionRule));
+    badgesCell.appendChild(badge("이력", record.docHistoryRule));
+    badgesCell.appendChild(badge("상태", record.statusRule));
     row.appendChild(badgesCell);
 
     const commentCell = document.createElement("td");

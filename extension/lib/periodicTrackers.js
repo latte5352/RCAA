@@ -3,12 +3,5 @@
 // 진행됐는지" 규칙의 대상 트래커 목록. 새 산출물이 추가되면 이 배열만 고치면 된다.
 
 export const PERIODIC_TRACKERS = new Set([
-  "Project Weekly Meeting Record",
-  "Communication Records",
-  "Quality Assurance Activity Report",
-  "Configuration Management Record",
-  "Configuration Activity Report",
-  "Problem Status Report",
-  "Problem Trend Report",
-  "Change Request Status Report",
+  "Project Weekly Meeting Record", "Schedule Plan(실행본)", "Human Effort Management(실행본)"
 ]);
