@@ -116,12 +116,22 @@ export function checkSaveRule(record) {
   }
 
   const pureName = stripProcessTag(trackerName);
-  const registeredName = fileExists
-    ? (fileName.includes(".") ? fileName.slice(0, fileName.lastIndexOf(".")) : fileName)
-    : paItemName;
+  // 파일명이든(예: "...zip") PA 항목 자체 제목이든(업로드한 파일명을 그대로 제목에 옮겨 적어서
+  // 확장자가 딸려 들어간 경우), 비교 전에 마지막 점(.) 뒤 확장자는 똑같이 떼고 비교한다.
+  const rawRegisteredName = fileExists ? fileName : paItemName;
+  const registeredName = rawRegisteredName.includes(".")
+    ? rawRegisteredName.slice(0, rawRegisteredName.lastIndexOf("."))
+    : rawRegisteredName;
   const registeredLabel = fileExists ? "실제 파일명" : "실제 항목명";
 
-  if (normalizeForNamingCheck(pureName) !== normalizeForNamingCheck(registeredName)) {
+  // Test Result/Review Result 트래커는 실행(회차)마다 이름 뒤에 회차 구분용 문구가 붙을 수
+  // 있어서(예: "Test Result_Run2"), 뒤에 뭐가 더 붙어있는 건 허용한다 - 다만 트래커명에
+  // 해당하는 앞부분은 정확히 일치해야 한다.
+  const namingOk = isDateBasedTracker(trackerName)
+    ? normalizeForNamingCheck(registeredName).startsWith(normalizeForNamingCheck(pureName))
+    : normalizeForNamingCheck(pureName) === normalizeForNamingCheck(registeredName);
+
+  if (!namingOk) {
     reasons.push(`File Naming Rule 불일치 (${registeredLabel}: '${registeredName}')`);
     detailReasons.push(`File Naming Rule 불일치 (트래커명: '${pureName}', ${registeredLabel}: '${registeredName}')`);
   }
@@ -441,9 +451,14 @@ export function runAudit(records, options = {}) {
 
     // codebeamer로 나가는 간결한 코멘트. NG가 하나도 없으면 비워둔다(원본 C_Audit.py와 동일하게,
     // "이상 없음" 기본값은 이후 반영 단계에서 채운다 - D_Result_Update 상당 로직 참고). 다만
-    // 아무 것도 등록 안 돼서(itemCount 0) 규칙 검사가 전부 스킵된 경우는 "이상 없음"이라고 하면
-    // 마치 검사해서 통과한 것처럼 오해할 수 있어서, 감사 대상에서 제외됐다는 걸 명시한다.
-    if (ngReasons.length === 0 && (record.itemCount || 0) === 0) {
+    // 1) codebeamer 안에 연결된 트래커가 아예 없는 경우(Source Code처럼 실제 산출물이
+    //    Bitbucket 등 밖에 있는 경우)는 자동으로 판단 자체가 불가능하니 직접 확인하라고 명시하고,
+    // 2) 트래커는 있지만 아무 것도 등록 안 돼서(itemCount 0) 규칙 검사가 전부 스킵된 경우는
+    //    "이상 없음"이라고 하면 마치 검사해서 통과한 것처럼 오해할 수 있어서, 감사 대상에서
+    //    제외됐다는 걸 명시한다.
+    if (record.noLinkedTracker) {
+      record.comment = "codebeamer에 연결된 트래커가 없음 - 실제 산출물이 있는 곳(Bitbucket 등)에서 직접 확인 필요";
+    } else if (ngReasons.length === 0 && (record.itemCount || 0) === 0) {
       record.comment = "파일이 등재되지 않아 감사 대상에서 제외";
     } else {
       record.comment = ngReasons.join(" / ");

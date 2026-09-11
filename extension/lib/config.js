@@ -25,3 +25,30 @@ export const TRACKERS_EXEMPT_FROM_ITEM_LIST = [
 export const TRACKER_NAME_ALIASES = {
   "Kick off Meeting Record": "Kick-off Meeting Record",
 };
+
+// 일부 트래커 워크플로우가 표준 영어 상태명 대신 다른 이름(예: 한글 "승인됨")을 쓰는 경우의
+// 별칭 매핑. 규칙 엔진은 전부 영어 상태명("Approved" 등)으로 비교하므로, 여기 있는 이름은
+// codebeamer에서 값을 읽어올 때 바로 오른쪽(표준 영어명)으로 바꿔서 취급한다.
+export const STATUS_NAME_ALIASES = {
+  "승인됨": "Approved",
+  "열림": "Open",
+  "검토중": "In Review",
+  "릴리스됨": "Released",
+};
+
+// 하나의 Review Report가 자기 이름 문서뿐 아니라 다른 문서까지 같이 검토 대상으로 포함하는
+// 경우. 왼쪽 Review Report 이름(" Review Report" 뗀 것)이 오른쪽에 나열된 문서(들)의 리뷰
+// 상태/대상 버전까지 같이 커버한다 - 그 문서들은 별도의 자기 이름 Review Report가 없다.
+// 오른쪽 문서 이름 뒤에 (AP)/(MCU)/(IC) 같은 한정자가 붙어도, Review Report 쪽에 붙은
+// 한정자와 짝을 맞춰 같은 Review Report로 연결된다(둘 다 한정자가 없으면 그대로 연결).
+export const REVIEW_REPORT_ADDITIONAL_TARGETS = {
+  "Software Architecture Design Specification": ["Software Calibration Data", "Software Configuration Data"],
+};
+
+// Item List(CIL)엔 등재돼 있지만, 실제 산출물이 codebeamer 밖(예: Bitbucket의 Source Code)에
+// 있어서 애초에 대응하는 codebeamer 트래커가 존재하지 않는 이름들. 이름이 살짝 달라서
+// 매칭에 실패한 "미등재"와는 다른 케이스라서 구분해서 관리한다 - 여기 있는 이름은 "미등재"
+// 경고 대신, 감사 결과 표에 "직접 확인 필요" 안내로 뜬다(자동으로 판정할 수 없으므로).
+export const ITEM_LIST_ENTRIES_WITHOUT_TRACKER = [
+  "Source Code",
+];

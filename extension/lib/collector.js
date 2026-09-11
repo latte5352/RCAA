@@ -5,7 +5,14 @@
 import { mapWithConcurrency } from "./codebeamerClient.js";
 import { parseBaselineData, buildLatestBaselines } from "./baselines.js";
 import { extractTargetVersionFromComment, isDateBasedTracker, stripTrailingQualifier, normalizeNameForRowMatch, extractProcessTag, toYYMMDD } from "./wikiTable.js";
-import { TRACKERS_EXEMPT_FROM_ITEM_LIST, TRACKER_NAME_ALIASES } from "./config.js";
+import { TRACKERS_EXEMPT_FROM_ITEM_LIST, TRACKER_NAME_ALIASES, ITEM_LIST_ENTRIES_WITHOUT_TRACKER, STATUS_NAME_ALIASES, REVIEW_REPORT_ADDITIONAL_TARGETS } from "./config.js";
+
+// codebeamer에서 읽어온 상태명이 표준 영어명이 아닌 다른 이름(예: 한글 "승인됨")이면
+// 규칙 엔진이 인식하는 영어명으로 바꾼다 (STATUS_NAME_ALIASES 참고).
+function normalizeStatusName(name) {
+  if (!name) return name;
+  return STATUS_NAME_ALIASES[name] || name;
+}
 
 const TRAILING_QUALIFIER_RE = /(\s*\([^)]*\))+$/; // 이름 끝의 "(MCU)", "(AP)" 같은 한정자
 
@@ -144,6 +151,16 @@ function buildReviewReportJoinMap(mergedRows) {
       const companionKey = baseWithoutQualifier.replace(/Result$/, "Report") + qualifierSuffix;
       if (!map.has(companionKey)) map.set(companionKey, uri);
     }
+
+    // 하나의 Review Report가 자기 이름과 다른 문서까지 같이 검토하는 경우
+    // (REVIEW_REPORT_ADDITIONAL_TARGETS 참고) - 그 문서들도 같은 한정자를 붙여서 연결한다.
+    const additionalTargets = REVIEW_REPORT_ADDITIONAL_TARGETS[baseWithoutQualifier];
+    if (additionalTargets) {
+      for (const target of additionalTargets) {
+        const targetKey = target + qualifierSuffix;
+        if (!map.has(targetKey)) map.set(targetKey, uri);
+      }
+    }
   }
   return map;
 }
@@ -205,7 +222,44 @@ function makeEventBasedChecker(client) {
 // ── 트래커 한 행(row) 처리 (process_row_parallel 상당) ───────────────────────
 async function processTrackerRow(client, mergedRow, ctx) {
   const uri = mergedRow.trackerUri;
-  if (!uri) return null; // 이름 매칭으로도 트래커를 못 찾은 경우에만 패스
+  if (!uri) {
+    // 트래커/카테고리 이름 매칭에 실패한 일반적인 경우(진짜 있는 트래커인데 표기가 달라서 못
+    // 찾은 것)는 그냥 조용히 빼고(null), "미등재" 경고 쪽에서 이미 다뤄지게 둔다 - 거기서
+    // 이름을 고쳐서 매칭시키는 게 맞는 방향이다. ITEM_LIST_ENTRIES_WITHOUT_TRACKER에 있는
+    // 이름(Source Code처럼 실제 산출물이 애초에 Bitbucket 등 codebeamer 밖에 있어서 대응하는
+    // 트래커 자체가 존재하지 않는 경우)만, "정상(이상 없음)"도 "미등재"도 아닌, 사람이 직접
+    // 확인해야 하는 항목으로 남긴다(ruleEngine.js의 runAudit이 noLinkedTracker를 보고 안내
+    // 코멘트를 채운다).
+    if (!ITEM_LIST_ENTRIES_WITHOUT_TRACKER.includes(stripBracketTag(mergedRow.trackerName))) return null;
+    return {
+      cilId: mergedRow.cilId,
+      trackerName: mergedRow.trackerName,
+      trackerType: "",
+      itemCount: 0,
+      fileName: "",
+      paItemName: "",
+      firstEdit: "",
+      lastEdit: "",
+      status: null,
+      currentVersion: "미업로드",
+      prId: "",
+      versioning: "",
+      verDesc: "",
+      reviewReportItemCount: "해당없음",
+      reviewReportStatus: "",
+      reviewReportUploaded: "해당없음",
+      waitingBeforeApproval: null,
+      reviewReportLastUpload: "",
+      owner: "",
+      createDateCurrent: false,
+      targetVersion: "",
+      versionCheckFailReason: "",
+      isEventBased: false,
+      testResultClosedDate: "",
+      itemFetchIncomplete: false,
+      noLinkedTracker: true,
+    };
+  }
 
   const rrUri = ctx.reviewReportUriMap.get(mergedRow.trackerName) || null;
 
@@ -220,7 +274,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
     const rrItems = rrResp.items;
     if (rrItems.length > 0) {
       const paItem = rrItems.find((it) => ((it.type || {}).name) === "Primary Attribute") || null;
-      const rrStatus = paItem ? (paItem.status || {}).name || "" : "";
+      const rrStatus = paItem ? normalizeStatusName((paItem.status || {}).name) || "" : "";
 
       let targetVersion = "";
       let versionCheckFailReason = "리뷰레포트 PA 아이템 없음";
@@ -284,7 +338,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
 
   // 히스토리에서 상태 변경 기록을 못 찾는 트래커가 있어서, 히스토리를 추론하는 대신 PA
   // 아이템 자체의 현재 status 필드를 그대로 쓴다 (리뷰레포트 상태와 동일한 방식)
-  const currentStatus = paItemObj ? (paItemObj.status || {}).name : null;
+  const currentStatus = paItemObj ? normalizeStatusName((paItemObj.status || {}).name) : null;
 
   const isDateBased = isDateBasedTracker(mergedRow.trackerName);
   const dateBasedClosedDate = isDateBased && paItemObj ? toYYMMDD(paItemObj.closedAt) : "";
