@@ -4,8 +4,8 @@
 
 import { mapWithConcurrency } from "./codebeamerClient.js";
 import { parseBaselineData, buildLatestBaselines } from "./baselines.js";
-import { extractTargetVersionFromComment, isDateBasedTracker, stripTrailingQualifier, normalizeNameForRowMatch, extractProcessTag, toYYMMDD } from "./wikiTable.js";
-import { TRACKERS_EXEMPT_FROM_ITEM_LIST, TRACKER_NAME_ALIASES, ITEM_LIST_ENTRIES_WITHOUT_TRACKER, STATUS_NAME_ALIASES, REVIEW_REPORT_ADDITIONAL_TARGETS } from "./config.js";
+import { extractTargetVersionFromComment, isDateBasedTracker, stripTrailingQualifier, normalizeNameForRowMatch, extractProcessTag, matchConfiguredSuffix, toYYMMDD } from "./wikiTable.js";
+import { TRACKERS_EXEMPT_FROM_ITEM_LIST, TRACKER_NAME_ALIASES, ITEM_LIST_ENTRIES_WITHOUT_TRACKER, ITEM_LIST_ENTRIES_EXCLUDED_FROM_AUDIT, STATUS_NAME_ALIASES, REVIEW_REPORT_ADDITIONAL_TARGETS } from "./config.js";
 
 // codebeamer에서 읽어온 상태명이 표준 영어명이 아닌 다른 이름(예: 한글 "승인됨")이면
 // 규칙 엔진이 인식하는 영어명으로 바꾼다 (STATUS_NAME_ALIASES 참고).
@@ -52,8 +52,13 @@ function parseCilData(items) {
  * - CIL엔 있는데 트래커/카테고리 쪽에 없으면: 그대로(트래커 URI는 CIL의 workItem에서 옴)
  * - 트래커/카테고리엔 있는데 CIL에 없으면: "미등재"로 분리 (감사 대상에서 빠짐) - 단
  *   TRACKERS_EXEMPT_FROM_ITEM_LIST에 있는 이름(NCL, Change Order/Request, Urgent Issue,
- *   CIL 자기 자신 등 원래 Item List 등재 대상이 아닌 트래커)은 미등재 목록에서 제외한다.
- *   Review Report/Audit Report는 보조 트래커라도 Item List에 등재돼 있어야 하므로 예외 없음.
+ *   CIL 자기 자신 등 원래 Item List 등재 대상이 아닌 트래커, 즉 애초에 형상감사 대상이 아닌
+ *   트래커)은 미등재 목록에서 제외한다. Review Report/Audit Report는 보조 트래커라도 Item
+ *   List에 등재돼 있어야 하므로 예외 없음.
+ * - CIL엔 있는데(cilId 존재) 대응하는 codebeamer 트래커가 없고, ITEM_LIST_ENTRIES_EXCLUDED_
+ *   FROM_AUDIT에 있는 이름(Source Code처럼 항상 사람이 직접 확인해야 해서 자동 감사 자체가
+ *   불가능한 경우)이면, "등재"쪽에서도 아예 제외한다 - 감사 결과 표/트래커 선택 목록 어디에도
+ *   나타나지 않는다.
  * - 이름 매칭은, 먼저 CIL 쪽 이름 앞에 흔히 붙는 "[SUP8_CIL-123456]" 같은 자동 생성 ID
  *   접두어를 트래커 쪽과 마찬가지로 떼어내고, 뜻이 다른 이름을 표기 차이(TRACKER_NAME_ALIASES)로
  *   정규화한 뒤, 공백/하이픈/언더스코어 유무·대소문자 차이는 무시하고 비교한다
@@ -111,9 +116,11 @@ function mergeCilWithTrackers(cilRows, trackers, categories) {
     return out;
   };
 
-  const registered = dedupeByUri(registeredRaw);
+  const registered = dedupeByUri(registeredRaw).filter(
+    (r) => matchConfiguredSuffix(stripBracketTag(r.trackerName), ITEM_LIST_ENTRIES_EXCLUDED_FROM_AUDIT) === null
+  );
   const unregistered = dedupeByUri(unregisteredRaw)
-    .filter((r) => !TRACKERS_EXEMPT_FROM_ITEM_LIST.includes(r.trackerName))
+    .filter((r) => matchConfiguredSuffix(r.trackerName, TRACKERS_EXEMPT_FROM_ITEM_LIST) === null)
     .map((r) => ({
       trackerName: r.trackerName,
       trackerUri: r.trackerUri,
@@ -130,8 +137,13 @@ function mergeCilWithTrackers(cilRows, trackers, categories) {
  * 대응 - 실제 이름이 있으면 그쪽이 항상 우선한다).
  */
 function buildReviewReportJoinMap(mergedRows) {
+  // r.trackerName은 CIL 쪽에서 온 이름일 수 있어서 "[SUP8_CIL-123456]" 같은 자동 생성 ID
+  // 접두어가 붙어있을 수 있다 - 조인 키를 만들기 전에 트래커/카테고리 쪽과 마찬가지로 뗀다
+  // (안 떼면 이 트래커명으로 만든 조인 키가 실제 조회 시점의 이름과 안 맞아서 매칭이 조용히
+  // 실패한다).
   const reviewRows = mergedRows
-    .filter((r) => (r.trackerName || "").includes(" Review Report"))
+    .map((r) => ({ ...r, trackerName: stripBracketTag(r.trackerName || "") }))
+    .filter((r) => r.trackerName.includes(" Review Report"))
     .map((r) => ({ joinKey: r.trackerName.replaceAll(" Review Report", ""), uri: r.trackerUri }));
 
   const map = new Map();
@@ -154,10 +166,16 @@ function buildReviewReportJoinMap(mergedRows) {
 
     // 하나의 Review Report가 자기 이름과 다른 문서까지 같이 검토하는 경우
     // (REVIEW_REPORT_ADDITIONAL_TARGETS 참고) - 그 문서들도 같은 한정자를 붙여서 연결한다.
-    const additionalTargets = REVIEW_REPORT_ADDITIONAL_TARGETS[baseWithoutQualifier];
-    if (additionalTargets) {
+    // REVIEW_REPORT_ADDITIONAL_TARGETS의 키는 차종 코드가 없는 "순수한" 트래커명이라, 여기
+    // baseWithoutQualifier 앞에 차종 코드가 붙어있을 수 있어 완전 일치 대신 접미사로 찾는다
+    // (matchConfiguredSuffix). 매칭되고 남은 앞부분(차종 코드, 있으면)은 오른쪽 문서 이름들
+    // 앞에도 그대로 붙여서, 같은 차종의 문서로 연결되게 한다.
+    const additionalTargetsKey = matchConfiguredSuffix(baseWithoutQualifier, Object.keys(REVIEW_REPORT_ADDITIONAL_TARGETS));
+    if (additionalTargetsKey) {
+      const prefix = baseWithoutQualifier.slice(0, baseWithoutQualifier.length - additionalTargetsKey.length);
+      const additionalTargets = REVIEW_REPORT_ADDITIONAL_TARGETS[additionalTargetsKey];
       for (const target of additionalTargets) {
-        const targetKey = target + qualifierSuffix;
+        const targetKey = prefix + target + qualifierSuffix;
         if (!map.has(targetKey)) map.set(targetKey, uri);
       }
     }
@@ -225,12 +243,12 @@ async function processTrackerRow(client, mergedRow, ctx) {
   if (!uri) {
     // 트래커/카테고리 이름 매칭에 실패한 일반적인 경우(진짜 있는 트래커인데 표기가 달라서 못
     // 찾은 것)는 그냥 조용히 빼고(null), "미등재" 경고 쪽에서 이미 다뤄지게 둔다 - 거기서
-    // 이름을 고쳐서 매칭시키는 게 맞는 방향이다. ITEM_LIST_ENTRIES_WITHOUT_TRACKER에 있는
-    // 이름(Source Code처럼 실제 산출물이 애초에 Bitbucket 등 codebeamer 밖에 있어서 대응하는
-    // 트래커 자체가 존재하지 않는 경우)만, "정상(이상 없음)"도 "미등재"도 아닌, 사람이 직접
-    // 확인해야 하는 항목으로 남긴다(ruleEngine.js의 runAudit이 noLinkedTracker를 보고 안내
-    // 코멘트를 채운다).
-    if (!ITEM_LIST_ENTRIES_WITHOUT_TRACKER.includes(stripBracketTag(mergedRow.trackerName))) return null;
+    // 이름을 고쳐서 매칭시키는 게 맞는 방향이다. ITEM_LIST_ENTRIES_EXCLUDED_FROM_AUDIT에 있는
+    // 이름(Source Code 등)은 mergeCilWithTrackers의 registered 필터링 단계에서 이미 걸러져서
+    // 여기까지 오지 않는다. ITEM_LIST_ENTRIES_WITHOUT_TRACKER에 있는 이름만, "정상(이상 없음)"도
+    // "미등재"도 아닌, 사람이 직접 확인해야 하는 항목으로 남긴다(ruleEngine.js의 runAudit이
+    // noLinkedTracker를 보고 안내 코멘트를 채운다).
+    if (matchConfiguredSuffix(stripBracketTag(mergedRow.trackerName), ITEM_LIST_ENTRIES_WITHOUT_TRACKER) === null) return null;
     return {
       cilId: mergedRow.cilId,
       trackerName: mergedRow.trackerName,
@@ -261,7 +279,10 @@ async function processTrackerRow(client, mergedRow, ctx) {
     };
   }
 
-  const rrUri = ctx.reviewReportUriMap.get(mergedRow.trackerName) || null;
+  // mergedRow.trackerName도 CIL 쪽 원본 이름(ID 접두어 포함 가능)이라, 조인 맵 만들 때와
+  // 똑같이 대괄호 태그를 떼고 찾아야 한다 - 안 그러면 실제로 연결된 Review Report가 있어도
+  // 조용히 못 찾는다.
+  const rrUri = ctx.reviewReportUriMap.get(stripBracketTag(mergedRow.trackerName)) || null;
 
   const tracker = await client.getJson(`https://codebeamer.slworld.com/cb/rest${uri}`);
   const trackerItemResult = await client.fetchAllItems(`https://codebeamer.slworld.com/cb/rest${uri}/items`);

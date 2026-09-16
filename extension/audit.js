@@ -39,6 +39,8 @@ const changedTrackersWrap = document.getElementById("changedTrackersWrap");
 const changedTrackersList = document.getElementById("changedTrackersList");
 const versionFailWrap = document.getElementById("versionFailWrap");
 const versionFailList = document.getElementById("versionFailList");
+const manualStatusCheckWrap = document.getElementById("manualStatusCheckWrap");
+const manualStatusCheckList = document.getElementById("manualStatusCheckList");
 const incompleteFetchWrap = document.getElementById("incompleteFetchWrap");
 const incompleteFetchList = document.getElementById("incompleteFetchList");
 const toolbarRow = document.getElementById("toolbarRow");
@@ -63,6 +65,7 @@ let warningsData = {
   changedTrackers: [],
   versionCheckFailures: [],
   incompleteFetchTrackers: [],
+  manualStatusCheckTrackers: [],
 };
 let reviewStatus = "pending"; // "pending" | "applied"
 let currentProjectId = null;
@@ -271,6 +274,7 @@ function renderWarnings(data) {
     changedTrackers = [],
     versionCheckFailures = [],
     incompleteFetchTrackers = [],
+    manualStatusCheckTrackers = [],
   } = data;
 
   if (unregisteredTrackers.length) {
@@ -314,6 +318,10 @@ function renderWarnings(data) {
       return row;
     });
     versionFailWrap.classList.remove("hidden");
+  }
+  if (manualStatusCheckTrackers.length) {
+    renderWarnList(manualStatusCheckList, manualStatusCheckTrackers, (name) => simpleRow(name));
+    manualStatusCheckWrap.classList.remove("hidden");
   }
   if (incompleteFetchTrackers.length) {
     renderWarnList(incompleteFetchList, incompleteFetchTrackers, (name) => simpleRow(name));
@@ -414,7 +422,7 @@ async function runNewAudit(client, username) {
   await applyCmRoleGate(client, projectId, username);
 
   setProgress(60, "감사 규칙 검사 중...");
-  const { records: auditedRecords, versionCheckFailures, incompleteFetchTrackers } = runAudit(records, {
+  const { records: auditedRecords, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers } = runAudit(records, {
     cadence, anchor, periodicTrackers: PERIODIC_TRACKERS,
   });
   auditRecords = auditedRecords;
@@ -422,7 +430,7 @@ async function runNewAudit(client, username) {
   setProgress(80, "지난 감사와 비교 중...");
   const { newTrackers, changedTrackers } = await diffAndUpdateHistory(projectName, auditedRecords);
 
-  warningsData = { unregisteredTrackers, newTrackers, changedTrackers, versionCheckFailures, incompleteFetchTrackers };
+  warningsData = { unregisteredTrackers, newTrackers, changedTrackers, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers };
 
   setProgress(100, "검토 대기 중 (codebeamer에는 아직 반영 안 됨)");
 

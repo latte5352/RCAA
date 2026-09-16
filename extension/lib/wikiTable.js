@@ -65,6 +65,19 @@ function nameEndsWith(name, suffix) {
   return stripTrailingQualifier(name).endsWith(suffix);
 }
 
+/**
+ * name이 configuredNames(설정 파일에 등록된 "차종 코드 없는" 기준 이름들) 중 하나로 끝나는지
+ * 확인해서, 일치한 설정값을 그대로 반환한다(없으면 null). 하드웨어/주기적 산출물/Review
+ * Report 등 여러 트래커가 이름 앞에 차종 코드가 붙을 수 있어서("NQ6 Hardware PCB Package"),
+ * 설정과 완전히 똑같은 이름인지가 아니라 그 이름으로 "끝나는지"로 비교해야 차종 코드 유무와
+ * 무관하게 항상 같은 트래커로 인식된다 - 이 매칭 방식은 여러 규칙에서 공통으로 써야 서로
+ * 일관성이 깨지지 않는다.
+ */
+function matchConfiguredSuffix(name, configuredNames) {
+  const pure = name || "";
+  return configuredNames.find((n) => pure.endsWith(n)) || null;
+}
+
 function isDateBasedTracker(trackerNameRaw) {
   const pureName = stripProcessTag(trackerNameRaw);
   return DATE_BASED_TRACKER_SUFFIXES.some((suffix) => nameEndsWith(pureName, suffix));
@@ -154,6 +167,7 @@ export {
   stripTrailingQualifier,
   normalizeNameForRowMatch,
   nameEndsWith,
+  matchConfiguredSuffix,
   isDateBasedTracker,
   extractTargetVersionFromComment,
   toYYMMDD,

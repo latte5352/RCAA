@@ -14,15 +14,23 @@
 // (1=OK, 2=NG, null=해당 규칙 검사 대상 아님), comment(codebeamer로 보낼 간결한 사유),
 // detailComment(사람이 보기 위한 상세 사유 배열).
 
-import { stripProcessTag, stripTrailingQualifier, nameEndsWith, isDateBasedTracker } from "./wikiTable.js";
+import { stripProcessTag, stripTrailingQualifier, nameEndsWith, matchConfiguredSuffix, isDateBasedTracker } from "./wikiTable.js";
 import { parseDateOnly, formatDateOnly, businessDaysBetween } from "./businessDays.js";
+import { STATUS_RULE_MANUAL_CHECK_TRACKERS } from "./config.js";
 
 const TRAILING_QUALIFIER_RE = /(\s*\([^)]*\))+$/;
+// 문자로만 이뤄진 짧은 진짜 확장자(zip/docx/pdf 등)로 끝날 때만 파일 확장자로 인식한다 -
+// checkSaveRule 참고(PA 항목 제목이 "1. Foo"처럼 번호를 매긴 경우 오탐 방지).
+const TRAILING_EXTENSION_RE = /\.[A-Za-z]{1,5}$/;
 
 const EMPTY_FILE_VALUES = new Set(["", "0", "미업로드"]);
 const EMPTY_DATE_VALUES = new Set(["", "미업로드"]);
 const VERSION_DEADLINE_DAYS = 10; // 2.1) 버전 규칙 준수: 첫 Edit 이후 Working Day 10일 이내 Version Up
 const UPLOAD_TRUE_STATUSES = new Set(["Approved", "Internal Baselined", "Gate Baselined", "Waiting for Approval"]);
+// UPLOAD_TRUE_STATUSES 중 "Waiting for Approval"은 아직 승인 전이라 반려되면 다시 수정될 수
+// 있지만, 이 세 상태는 이미 승인/베이스라인까지 끝난 상태라 그 이후로는 버전업이나 PR 조치
+// 기술을 더 따질 필요가 없다(checkVersionRule/checkDocHistoryRule 참고).
+const FINALIZED_STATUSES = new Set(["Approved", "Internal Baselined", "Gate Baselined"]);
 const UPLOAD_FALSE_STATUSES = new Set(["In Review", "Open"]);
 const EVENTBASED_TERMINAL_STATUSES = new Set(["Released", "Read Only"]);
 const PR_ID_SPLIT_RE = /[\s,]+/;
@@ -117,19 +125,24 @@ export function checkSaveRule(record) {
 
   const pureName = stripProcessTag(trackerName);
   // 파일명이든(예: "...zip") PA 항목 자체 제목이든(업로드한 파일명을 그대로 제목에 옮겨 적어서
-  // 확장자가 딸려 들어간 경우), 비교 전에 마지막 점(.) 뒤 확장자는 똑같이 떼고 비교한다.
+  // 확장자가 딸려 들어간 경우), 비교 전에 진짜 파일 확장자만 떼고 비교한다. 그냥 "마지막
+  // 점(.) 뒤"를 다 떼면, PA 항목 제목이 "1. Software Qualification Test Specification"처럼
+  // 번호를 매긴 경우 "1." 뒤를 통째로 확장자로 오인해서 실제 항목명이 '1'만 남는 오탐이
+  // 생긴다 - 그래서 문자로만 이뤄진 짧은 진짜 확장자(zip/docx/pdf 등)로 끝날 때만 뗀다.
   const rawRegisteredName = fileExists ? fileName : paItemName;
-  const registeredName = rawRegisteredName.includes(".")
-    ? rawRegisteredName.slice(0, rawRegisteredName.lastIndexOf("."))
-    : rawRegisteredName;
+  const extMatch = TRAILING_EXTENSION_RE.exec(rawRegisteredName);
+  const registeredName = extMatch ? rawRegisteredName.slice(0, extMatch.index) : rawRegisteredName;
   const registeredLabel = fileExists ? "실제 파일명" : "실제 항목명";
+  // 등록된 이름 앞에도 트래커명과 같은 프로세스 태그(예: "[SWE.4]")가 그대로 붙어있을 수 있다 -
+  // 트래커명과 똑같이 붙은 거라면 문제없는 것으로 보고, 비교 전에 똑같이 떼고 비교한다.
+  const registeredNameForCompare = stripProcessTag(registeredName);
 
   // Test Result/Review Result 트래커는 실행(회차)마다 이름 뒤에 회차 구분용 문구가 붙을 수
   // 있어서(예: "Test Result_Run2"), 뒤에 뭐가 더 붙어있는 건 허용한다 - 다만 트래커명에
   // 해당하는 앞부분은 정확히 일치해야 한다.
   const namingOk = isDateBasedTracker(trackerName)
-    ? normalizeForNamingCheck(registeredName).startsWith(normalizeForNamingCheck(pureName))
-    : normalizeForNamingCheck(pureName) === normalizeForNamingCheck(registeredName);
+    ? normalizeForNamingCheck(registeredNameForCompare).startsWith(normalizeForNamingCheck(pureName))
+    : normalizeForNamingCheck(pureName) === normalizeForNamingCheck(registeredNameForCompare);
 
   if (!namingOk) {
     reasons.push(`File Naming Rule 불일치 (${registeredLabel}: '${registeredName}')`);
@@ -140,28 +153,35 @@ export function checkSaveRule(record) {
 }
 
 // ── 버전 규칙 검사 ──────────────────────────────────────────────────────────
+// 마지막 Edit 이후 아직 버전업이 안 된 채로 Working Day 10일이 지났는지, "오늘" 기준으로
+// 판단한다(주기적/이벤트성 Create Date 검사와 같은 방식) - 예전에 한 번 지연됐더라도 그 뒤에
+// 버전업이 끝났으면 이미 해결된 과거 일이므로, 감사를 다시 돌릴 때마다 그 옛날 지연을 계속
+// NG로 잡을 필요는 없다는 확인에 따른 것. 마지막 Edit 시점에 이미 그 이후로 버전업이 됐으면
+// (versioningIso가 lastEditIso와 같거나 그 이후) 지연 없음으로 본다. 이미 승인/베이스라인까지
+// 끝난 상태(FINALIZED_STATUSES)면, 마지막 히스토리 항목이 실제 내용 수정이 아니라 승인/
+// 베이스라인 전환 자체일 수 있어서(그 이후로 버전업이 없는 게 당연함) 아예 검사하지 않는다.
 export function checkVersionRule(record) {
   if (record.isEventBased) return null;
   if (isDateBasedTracker(record.trackerName)) return null;
+  if (FINALIZED_STATUSES.has(record.status)) return null; // 이미 승인/베이스라인 끝남 - 이후 버전업 지연 안 따짐
 
-  const firstEditIso = parseDatetimeIso(record.firstEdit);
-  if (!firstEditIso) return null;
+  const lastEditIso = parseDatetimeIso(record.lastEdit);
+  if (!lastEditIso) return null;
+
+  const versioningIso = parseDatetimeIso(record.versioning);
+  if (versioningIso && versioningIso >= lastEditIso) {
+    return { ok: true, reasons: [], detailReasons: [] };
+  }
 
   const reasons = [];
-  const versioningIso = parseDatetimeIso(record.versioning);
-
-  if (!versioningIso) {
-    reasons.push("첫 Edit 이후 버저닝 미수행");
-  } else {
-    const businessDays = businessDaysBetween(firstEditIso, versioningIso);
-    if (businessDays > VERSION_DEADLINE_DAYS) {
-      const firstEditDate = formatDateOnly(parseDateOnly(firstEditIso));
-      const versioningDate = formatDateOnly(parseDateOnly(versioningIso));
-      reasons.push(
-        `버저닝 지연 (첫 Edit ${firstEditDate} → 버저닝 ${versioningDate}, ` +
-          `영업일 ${businessDays}일 경과, 기준 ${VERSION_DEADLINE_DAYS}일 초과)`
-      );
-    }
+  const todayIso = formatDateOnly(todayAsUtcDate());
+  const businessDays = businessDaysBetween(lastEditIso, todayIso);
+  if (businessDays > VERSION_DEADLINE_DAYS) {
+    const lastEditDate = formatDateOnly(parseDateOnly(lastEditIso));
+    reasons.push(
+      `버저닝 지연 (마지막 Edit ${lastEditDate} 이후 아직 버전업 안 됨, ` +
+        `오늘까지 영업일 ${businessDays}일 경과, 기준 ${VERSION_DEADLINE_DAYS}일 초과)`
+    );
   }
 
   return { ok: reasons.length === 0, reasons, detailReasons: reasons };
@@ -170,14 +190,17 @@ export function checkVersionRule(record) {
 // ── 주기적 활동 산출물 Create Date 검사 ─────────────────────────────────────
 // PERIODIC_TRACKERS 목록과 비교할 때 공백/언더스코어 차이는 무시한다(예: "Schedule Plan"과
 // "Schedule_Plan"을 같은 이름으로 봄) - 단 괄호 안 내용(예: "(실행본)")은 그대로 남기고
-// 비교하므로, 괄호 안 단어가 다르면 여전히 다른 산출물로 취급된다.
+// 비교하므로, 괄호 안 단어가 다르면 여전히 다른 산출물로 취급된다. 또한 앞에 차종 코드가
+// 붙어도(예: "NQ6 Schedule Plan(실행본)") 매칭되도록 완전 일치 대신 접미사로 비교한다
+// (matchConfiguredSuffix) - 다른 하드웨어/상태 규칙 예외 트래커들과 동일한 방식.
 function stripWhitespaceAndUnderscore(name) {
   return (name || "").replace(/[\s_]+/g, "");
 }
 
 export function checkPeriodicCreateDate(record, cadence, anchor, periodicTrackers) {
   const pureName = stripWhitespaceAndUnderscore(stripProcessTag(record.trackerName));
-  const isPeriodic = [...periodicTrackers].some((t) => stripWhitespaceAndUnderscore(t) === pureName);
+  const normalizedPeriodicNames = [...periodicTrackers].map(stripWhitespaceAndUnderscore);
+  const isPeriodic = matchConfiguredSuffix(pureName, normalizedPeriodicNames) !== null;
   if (!isPeriodic) return null;
 
   const firstEditIso = parseDatetimeIso(record.firstEdit);
@@ -225,7 +248,15 @@ export function checkDocHistoryRule(record) {
   if (itemCount === 0) return null; // 아직 아무것도 등록 안 됨(파일 미업로드) - 시작 전이라 검사 대상 아님
 
   const status = record.status;
-  if (status === "Approved") return null; // Approved 상태의 버전은 문서 이력 기술 규칙 전체를 검사하지 않는다
+  if (FINALIZED_STATUSES.has(status)) return null; // 이미 승인/베이스라인 끝난 버전은 문서 이력 기술 규칙 전체를 검사하지 않는다
+
+  // 개발 중이라 다시 Open된 경우, 이번에 손댄 내용을 아직 새 버전(baseline)으로 안 올렸으면
+  // 지금 codebeamer에 있는 버전 이력 Description은 예전 버전 것이라 이번 작업 중인 PR이
+  // 당연히 안 적혀있을 수밖에 없다 - 새 버전을 올린 뒤에야 그 설명에 PR이 제대로 적혔는지
+  // 확인하는 게 맞다(checkVersionRule의 "versioningIso가 lastEditIso 이후인지" 판단과 동일).
+  const lastEditIso = parseDatetimeIso(record.lastEdit);
+  const versioningIso = parseDatetimeIso(record.versioning);
+  if (lastEditIso && (!versioningIso || versioningIso < lastEditIso)) return null;
 
   const prIds = new Set();
   for (const token of (record.prId || "").split(PR_ID_SPLIT_RE)) {
@@ -355,7 +386,7 @@ export function checkReviewReportVersionRule(record, nameIndex) {
  * (1=OK, 2=NG, null=대상 아님)과 comment(간결한 사유, codebeamer 전송용),
  * detailComment(상세 사유 배열)를 채워 넣는다.
  *
- * @returns {{records, versionCheckFailures: Array<{trackerName, reason}>, incompleteFetchTrackers: string[]}}
+ * @returns {{records, versionCheckFailures: Array<{trackerName, reason}>, incompleteFetchTrackers: string[], manualStatusCheckTrackers: string[]}}
  */
 export function runAudit(records, options = {}) {
   const {
@@ -367,6 +398,7 @@ export function runAudit(records, options = {}) {
   const nameIndex = buildTrackerNameIndex(records);
   const versionCheckFailures = [];
   const incompleteFetchTrackers = [];
+  const manualStatusCheckTrackers = [];
 
   for (const record of records) {
     if (record.itemFetchIncomplete) {
@@ -419,27 +451,37 @@ export function runAudit(records, options = {}) {
     const statusNgReasons = [];
     const statusDetailReasons = [];
 
-    const statusResult = checkStatusRule(record);
-    if (statusResult !== null) {
-      statusChecked = true;
-      if (!statusResult.ok) {
-        statusNgReasons.push(...statusResult.reasons);
-        statusDetailReasons.push(...statusResult.detailReasons);
-      }
-    }
-
-    const reviewVerResult = checkReviewReportVersionRule(record, nameIndex);
-    if (reviewVerResult === null) {
-      // Approved인데 리뷰 대상 버전을 자동으로 못 읽은 경우만 "판정 불가" 목록에 안내
-      const failReason = record.versionCheckFailReason;
-      if (record.status === "Approved" && failReason) {
-        versionCheckFailures.push({ trackerName: record.trackerName, reason: failReason });
-      }
+    // STATUS_RULE_MANUAL_CHECK_TRACKERS에 있는 트래커는 상태 규칙을 자동 판정하지 않고
+    // 항상 사람이 직접 확인하게 한다 - 자동 OK/NG를 아예 안 매기고 별도 안내 목록에만 올린다.
+    // 하드웨어 계열은 이름 앞에 차종 코드가 붙을 수 있어서(예: "NQ6 Hardware Circuit Diagram"),
+    // 완전 일치가 아니라 그 이름으로 끝나는지로 비교한다.
+    const pureTrackerNameForStatusCheck = stripProcessTag(record.trackerName);
+    const needsManualStatusCheck = matchConfiguredSuffix(pureTrackerNameForStatusCheck, STATUS_RULE_MANUAL_CHECK_TRACKERS) !== null;
+    if (needsManualStatusCheck) {
+      manualStatusCheckTrackers.push(record.trackerName);
     } else {
-      statusChecked = true;
-      if (!reviewVerResult.ok) {
-        statusNgReasons.push(...reviewVerResult.reasons);
-        statusDetailReasons.push(...reviewVerResult.detailReasons);
+      const statusResult = checkStatusRule(record);
+      if (statusResult !== null) {
+        statusChecked = true;
+        if (!statusResult.ok) {
+          statusNgReasons.push(...statusResult.reasons);
+          statusDetailReasons.push(...statusResult.detailReasons);
+        }
+      }
+
+      const reviewVerResult = checkReviewReportVersionRule(record, nameIndex);
+      if (reviewVerResult === null) {
+        // Approved인데 리뷰 대상 버전을 자동으로 못 읽은 경우만 "판정 불가" 목록에 안내
+        const failReason = record.versionCheckFailReason;
+        if (record.status === "Approved" && failReason) {
+          versionCheckFailures.push({ trackerName: record.trackerName, reason: failReason });
+        }
+      } else {
+        statusChecked = true;
+        if (!reviewVerResult.ok) {
+          statusNgReasons.push(...reviewVerResult.reasons);
+          statusDetailReasons.push(...reviewVerResult.detailReasons);
+        }
       }
     }
 
@@ -466,5 +508,5 @@ export function runAudit(records, options = {}) {
     record.detailComment = detailNgReasons;
   }
 
-  return { records, versionCheckFailures, incompleteFetchTrackers };
+  return { records, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers };
 }
