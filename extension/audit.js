@@ -90,7 +90,50 @@ function appendLogLine(text, isDone) {
   progressLog.scrollTop = progressLog.scrollHeight;
 }
 
-function handleCollectionProgress({ trackerName, status, completed, total }) {
+let phaseAnimTimer = null;
+let phaseDotCount = 1;
+
+// NCL-CIL 연결 관계 조회처럼 중간 진행률 업데이트 없이 한 단계가 오래 걸리는 경우, 그동안
+// 화면이 멈춘 것처럼 보이지 않게 마지막 phase 줄 끝에 점을 주기적으로 움직여준다. 실제 phase
+// 메시지가 오면(evt.phase) 점 개수를 초기화하고, 트래커별 조회 루프로 넘어가면 멈춘다.
+function startPhaseAnimation() {
+  if (phaseAnimTimer) return;
+  phaseAnimTimer = setInterval(() => {
+    const lastLine = progressLog.lastElementChild;
+    if (!lastLine || lastLine.dataset.phase !== "1") return;
+    phaseDotCount = (phaseDotCount % 3) + 1;
+    lastLine.textContent = lastLine.dataset.baseText + ".".repeat(phaseDotCount);
+  }, 400);
+}
+
+function stopPhaseAnimation() {
+  if (phaseAnimTimer) {
+    clearInterval(phaseAnimTimer);
+    phaseAnimTimer = null;
+  }
+}
+
+function handleCollectionProgress(evt) {
+  if (evt.phase) {
+    // per-tracker 조회 루프 전 단계(프로젝트/트래커 목록/CIL/베이스라인/NCL 조회 등) - 페이지네이션
+    // 때문에 같은 단계가 여러 번 불릴 수 있어서, 직전 줄이 phase 메시지면 새 줄을 추가하는 대신
+    // 그 줄을 갱신한다(예: "CIL 조회 중... (100건)" -> "(200건)").
+    const baseText = evt.phase.replace(/\.+$/, "");
+    const lastLine = progressLog.lastElementChild;
+    if (lastLine && lastLine.dataset.phase === "1") {
+      lastLine.dataset.baseText = baseText;
+      lastLine.textContent = evt.phase;
+    } else {
+      appendLogLine(evt.phase, false);
+      progressLog.lastElementChild.dataset.phase = "1";
+      progressLog.lastElementChild.dataset.baseText = baseText;
+    }
+    phaseDotCount = 1;
+    startPhaseAnimation();
+    return;
+  }
+  stopPhaseAnimation();
+  const { trackerName, status, completed, total } = evt;
   if (status === "start") {
     appendLogLine(`  ${trackerName} 조회 중...`, false);
   } else {

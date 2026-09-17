@@ -61,7 +61,7 @@ export function createClient({ baseUrl, baseUrlV3, username, password }) {
    * 한 번만 조회하면 그보다 많은 트래커에서 조용히 잘린다. 빈 페이지가 나올 때까지 전부 모은다.
    * 중간 페이지 요청이 실패하면 그때까지 모은 것만 반환하되 incomplete=true를 같이 반환한다.
    */
-  async function fetchAllItems(itemsUrl) {
+  async function fetchAllItems(itemsUrl, { onPage } = {}) {
     const allItems = [];
     let page = 1;
     let incomplete = false;
@@ -82,6 +82,7 @@ export function createClient({ baseUrl, baseUrlV3, username, password }) {
       const pageItems = data.items || [];
       if (pageItems.length === 0) break;
       allItems.push(...pageItems);
+      onPage?.(page, allItems.length);
       page += 1;
     }
     return { items: allItems, incomplete };

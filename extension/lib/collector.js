@@ -412,19 +412,24 @@ async function processTrackerRow(client, mergedRow, ctx) {
 // 만든다. collectAuditData와 listRegisteredTrackerNames가 이 앞부분을 공유한다 - 트래커
 // 이름만 필요한 side panel의 트래커 선택 목록도, 이 무거운 per-tracker 조회(processTrackerRow)
 // 전까지만 실행하면 충분히 가볍게 얻을 수 있다.
-async function loadMergedTrackerRows(client, { projectName, trackerCil }) {
+async function loadMergedTrackerRows(client, { projectName, trackerCil, onProgress = null }) {
+  onProgress?.({ phase: "프로젝트 정보 조회 중..." });
   const projectsResp = await client.getJson(`${client.baseUrl}/projects/page/1`);
   const project = (projectsResp.projects || []).find((p) => (p.name || "").includes(projectName));
   if (!project) throw new Error(`프로젝트를 찾을 수 없습니다: ${projectName}`);
   const userUri = `${client.baseUrl}${project.uri}`;
 
+  onProgress?.({ phase: "트래커/카테고리 목록 조회 중..." });
   const allTrackers = await client.getJson(`${userUri}/trackers`);
   const allCategories = await client.getJson(`${userUri}/categories`);
 
   // CIL 트래커 조회
   const cilTracker = allTrackers.find((t) => t.name === trackerCil);
   if (!cilTracker) throw new Error(`CIL 트래커를 찾을 수 없습니다: ${trackerCil}`);
-  const cilItemsResult = await client.fetchAllItems(`${client.baseUrl}${cilTracker.uri}/items`);
+  onProgress?.({ phase: "Configuration Item List 조회 중..." });
+  const cilItemsResult = await client.fetchAllItems(`${client.baseUrl}${cilTracker.uri}/items`, {
+    onPage: (page, itemCount) => onProgress?.({ phase: `Configuration Item List 조회 중... (${itemCount}건)` }),
+  });
   const cilRows = parseCilData(cilItemsResult.items);
 
   const { registered, unregistered } = mergeCilWithTrackers(cilRows, allTrackers, allCategories);
@@ -446,13 +451,16 @@ export async function listRegisteredTrackerNames(client, { projectName, trackerC
  * 등재된 트래커 중 그 이름들만 실제 조회(processTrackerRow)하고, 나머지는 건드리지 않는다 -
  * 특정 트래커만 골라서 감사할 때 불필요한 codebeamer 호출을 줄이기 위함이다. 리뷰레포트
  * 조인맵/베이스라인/PR맵은 트래커 간에 서로 참조할 수 있어 항상 프로젝트 전체 기준으로 만든다.
- * onProgress({ trackerName, status: "start"|"done", completed, total })를 주면 트래커 하나씩
- * 조회를 시작/완료할 때마다 불러준다 - 화면에 진행 로그를 실시간으로 찍어 대기 시간을
+ * onProgress를 주면 두 가지 형태로 불러준다 - 화면에 진행 로그를 실시간으로 찍어 대기 시간을
  * 덜 답답하게 하기 위함이다.
+ * - { phase: string }: per-tracker 조회 루프 전, 프로젝트/트래커 목록/CIL/베이스라인/NCL 등을
+ *   순차로 조회하는 동안 각 단계가 시작될 때(페이지네이션이 있는 조회는 페이지마다) 불러준다.
+ * - { trackerName, status: "start"|"done", completed, total }: 트래커 하나씩 조회를
+ *   시작/완료할 때마다 불러준다.
  * @returns {{records: Array, unregisteredTrackers: Array<{trackerName, trackerUri}>, projectId: string}}
  */
 export async function collectAuditData(client, { projectName, trackerCil, trackerNcl, onlyTrackerNames = null, onProgress = null }) {
-  const { userUri, allTrackers, registered, unregistered } = await loadMergedTrackerRows(client, { projectName, trackerCil });
+  const { userUri, allTrackers, registered, unregistered } = await loadMergedTrackerRows(client, { projectName, trackerCil, onProgress });
   const reviewReportUriMap = buildReviewReportJoinMap(registered);
 
   const targetRows = onlyTrackerNames && onlyTrackerNames.length
@@ -461,6 +469,7 @@ export async function collectAuditData(client, { projectName, trackerCil, tracke
 
   // 베이스라인
   const projectId = userUri.split("/").pop();
+  onProgress?.({ phase: "베이스라인 조회 중..." });
   const baselinesResp = await client.getJson(`https://codebeamer.slworld.com/cb/rest/projects/${projectId}/baselines`);
   const baselineRows = parseBaselineData(baselinesResp);
   const latestBaselines = buildLatestBaselines(baselineRows);
@@ -469,11 +478,16 @@ export async function collectAuditData(client, { projectName, trackerCil, tracke
   const nclTracker = allTrackers.find((t) => t.name === trackerNcl);
   let prMap = new Map();
   if (nclTracker) {
-    const nclItemsResult = await client.fetchAllItems(`${client.baseUrl}${nclTracker.uri}/items`);
+    onProgress?.({ phase: "NCL(부적합 목록) 항목 조회 중..." });
+    const nclItemsResult = await client.fetchAllItems(`${client.baseUrl}${nclTracker.uri}/items`, {
+      onPage: (page, itemCount) => onProgress?.({ phase: `NCL(부적합 목록) 항목 조회 중... (${itemCount}건)` }),
+    });
+    onProgress?.({ phase: "NCL-CIL 연결 관계 조회 중..." });
     const allRelations = await mapWithConcurrency(nclItemsResult.items, 20, (item) => fetchNclRelations(client, item));
     prMap = buildNclPrMap(allRelations.flat());
   }
 
+  onProgress?.({ phase: `감사 대상 트래커 ${targetRows.length}개 조회 시작...` });
   const isEventbasedWorkflow = makeEventBasedChecker(client);
   const ctx = { reviewReportUriMap, latestBaselines, prMap, isEventbasedWorkflow };
 
