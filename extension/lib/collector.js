@@ -37,10 +37,15 @@ const PR_IN_DESC_RE = /\bPR[^\d]*?(\d+)/gi;
  * 후보를 추리는 용도). 문제가 있으면 checkpoint가 전진하지 않으므로, 고쳐질 때까지 다음
  * 감사에서도 같은 지점부터 다시 확인해 계속 안내된다.
  * checkpointVersion을 baseline 목록에서 못 찾으면(첫 확인, 트래커명 변경 등) 최신 버전
- * 하나만 본다.
+ * 하나만 본다. 단, 처음 승인된 baseline(그리고 그 이전)은 무슨 일이 있어도 검사 대상에
+ * 넣지 않는다 - 최초 승인은 문제를 고쳐서 된 게 아니라 처음 공식화된 것뿐이라 PR을 적을
+ * 이유가 없다(예: 1.0 (Approved)가 이 트래커의 baseline 이력 중 첫 baseline이자 첫 승인인
+ * 경우, 체크포인트가 없어서 "최신 것 하나만 본다" 폴백에 걸리더라도 1.0은 보지 않는다).
  */
 function findDocHistoryManualCheckReason(allBaselines, checkpointVersion, validPrNumbers) {
   if (!allBaselines || allBaselines.length === 0) return null;
+
+  const firstApprovedIndex = allBaselines.findIndex((b) => (b.versionType || "").includes("Approved"));
 
   let sinceIndex;
   if (checkpointVersion) {
@@ -51,6 +56,9 @@ function findDocHistoryManualCheckReason(allBaselines, checkpointVersion, validP
     sinceIndex = lastMatchIdx >= 0 ? lastMatchIdx + 1 : allBaselines.length - 1;
   } else {
     sinceIndex = allBaselines.length - 1;
+  }
+  if (firstApprovedIndex >= 0 && sinceIndex <= firstApprovedIndex) {
+    sinceIndex = firstApprovedIndex + 1;
   }
 
   const newBaselines = allBaselines.slice(sinceIndex);
