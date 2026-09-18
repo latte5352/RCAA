@@ -464,6 +464,13 @@ async function processTrackerRow(client, mergedRow, ctx) {
       ctx.docHistoryCheckpoints[tName],
       ctx.validPrNumbers
     ),
+    // 문서 이력 기술 규칙(PR 기재 확인)은 이 트래커가 한 번이라도 승인/베이스라인까지 간
+    // 적이 있어야 적용한다 - 첫 승인 전 초기 버전들(1.0, 1.1 등)은 아직 정식 PR 추적
+    // 대상이 아니라서, 그 이전 버전 설명에 PR이 없다고 잡으면 안 된다는 확인에 따른 것.
+    // baseline 이력 중 승인 스탬프(versionType에 "Approved" 포함)가 하나라도 있으면 true.
+    hasEverBeenApproved: (ctx.allBaselinesByTracker.get(tName) || []).some(
+      (b) => (b.versionType || "").includes("Approved")
+    ),
   };
 }
 
