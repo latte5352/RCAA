@@ -33,7 +33,6 @@ const UPLOAD_TRUE_STATUSES = new Set(["Approved", "Internal Baselined", "Gate Ba
 const FINALIZED_STATUSES = new Set(["Approved", "Internal Baselined", "Gate Baselined"]);
 const UPLOAD_FALSE_STATUSES = new Set(["In Review", "Open"]);
 const EVENTBASED_TERMINAL_STATUSES = new Set(["Released", "Read Only"]);
-const PR_ID_SPLIT_RE = /[\s,]+/;
 const PR_IN_DESC_RE = /\bPR[^\d]*?(\d+)/gi; // 하이픈 유무와 무관하게 PR 뒤 첫 숫자를 PR 번호로 인식
 
 export const DEFAULT_PERIODIC_CADENCE = "biweekly";
@@ -248,7 +247,15 @@ export function checkDocHistoryRule(record) {
   if (itemCount === 0) return null; // 아직 아무것도 등록 안 됨(파일 미업로드) - 시작 전이라 검사 대상 아님
 
   const status = record.status;
-  if (FINALIZED_STATUSES.has(status)) return null; // 이미 승인/베이스라인 끝난 버전은 문서 이력 기술 규칙 전체를 검사하지 않는다
+  if (FINALIZED_STATUSES.has(status)) {
+    // 이미 승인/베이스라인 끝났어도, "마지막으로 확인해서 문제없었던 지점" 이후 새로 생긴
+    // 버전들에 PR 기재가 빠진 게 없으면 OK로 처리한다(collector.js의
+    // findDocHistoryManualCheckReason이 미리 계산해둔 결과). 빠진 게 있으면 PR이 꼭
+    // 필요없는 경우일 수도 있어 자동으로 NG를 매기지 않고 N/A로 남긴 채, runAudit이 별도
+    // "직접 확인 필요" 목록에 올린다 - 고쳐지기 전까지는 체크포인트가 전진하지 않아 계속
+    // 안내된다.
+    return record.docHistoryManualCheckReason ? null : { ok: true, reasons: [], detailReasons: [] };
+  }
 
   // 개발 중이라 다시 Open된 경우, 이번에 손댄 내용을 아직 새 버전(baseline)으로 안 올렸으면
   // 지금 codebeamer에 있는 버전 이력 Description은 예전 버전 것이라 이번 작업 중인 PR이
@@ -258,29 +265,29 @@ export function checkDocHistoryRule(record) {
   const versioningIso = parseDatetimeIso(record.versioning);
   if (lastEditIso && (!versioningIso || versioningIso < lastEditIso)) return null;
 
-  const prIds = new Set();
-  for (const token of (record.prId || "").split(PR_ID_SPLIT_RE)) {
-    const t = token.trim();
-    if (/^\d+$/.test(t)) prIds.add(Number(t));
-  }
-
+  // 이 문서에 실제로 어떤 PR이 연결돼 열려있는지(NCL Related Item 대조)까지는 안 보고, 버전
+  // 이력 Description에 PR 번호가 하나라도 적혀있는지 + 그 번호가 NC List에 실제 존재하는지만
+  // 본다(완결성 체크) - FINALIZED_STATUSES 브랜치의 판단 방식과 동일하게 통일한 것.
   const reasons = [];
   const verDescRaw = record.verDesc || "";
+  const currentVersion = record.currentVersion || "미업로드";
   if (!verDescRaw) {
-    const currentVersion = record.currentVersion || "미업로드";
     reasons.push(`버전 이력 Description이 작성되지 않음(버전 ${currentVersion})`);
-  }
+  } else {
+    const prNums = [];
+    PR_IN_DESC_RE.lastIndex = 0;
+    let m;
+    while ((m = PR_IN_DESC_RE.exec(verDescRaw)) !== null) prNums.push(m[1]);
 
-  const descPrIds = new Set();
-  PR_IN_DESC_RE.lastIndex = 0;
-  let m;
-  while ((m = PR_IN_DESC_RE.exec(verDescRaw)) !== null) {
-    descPrIds.add(Number(m[1]));
-  }
-
-  const missing = [...prIds].filter((id) => !descPrIds.has(id)).sort((a, b) => a - b);
-  if (missing.length > 0) {
-    reasons.push(`PR 조치 미기술: ${missing.join(", ")}`);
+    if (prNums.length === 0) {
+      reasons.push(`버전 이력 Description에 PR 번호가 적혀있지 않음(버전 ${currentVersion})`);
+    } else {
+      const validPrNumbers = record.validPrNumbers || new Set();
+      const invalid = prNums.filter((n) => !validPrNumbers.has(n));
+      if (invalid.length > 0) {
+        reasons.push(`버전 이력 Description에 적힌 PR 번호(${invalid.join(", ")})가 NC List에서 확인되지 않음(버전 ${currentVersion})`);
+      }
+    }
   }
 
   return { ok: reasons.length === 0, reasons, detailReasons: reasons };
@@ -386,7 +393,7 @@ export function checkReviewReportVersionRule(record, nameIndex) {
  * (1=OK, 2=NG, null=대상 아님)과 comment(간결한 사유, codebeamer 전송용),
  * detailComment(상세 사유 배열)를 채워 넣는다.
  *
- * @returns {{records, versionCheckFailures: Array<{trackerName, reason}>, incompleteFetchTrackers: string[], manualStatusCheckTrackers: string[]}}
+ * @returns {{records, versionCheckFailures: Array<{trackerName, reason}>, incompleteFetchTrackers: string[], manualStatusCheckTrackers: string[], docHistoryManualCheckTrackers: Array<{trackerName, reason}>}}
  */
 export function runAudit(records, options = {}) {
   const {
@@ -399,6 +406,7 @@ export function runAudit(records, options = {}) {
   const versionCheckFailures = [];
   const incompleteFetchTrackers = [];
   const manualStatusCheckTrackers = [];
+  const docHistoryManualCheckTrackers = [];
 
   for (const record of records) {
     if (record.itemFetchIncomplete) {
@@ -444,6 +452,14 @@ export function runAudit(records, options = {}) {
     if (docHistResult && !docHistResult.ok) {
       ngReasons.push(...docHistResult.reasons);
       detailNgReasons.push(...docHistResult.detailReasons);
+    }
+    // checkDocHistoryRule이 승인/베이스라인 완료라서 스킵된(N/A) 경우에 한해, collector.js가
+    // 미리 확인해둔 "체크포인트 이후 새 버전 설명에 PR 번호가 빠졌거나 NC List에 없는
+    // 번호인지"를 대신 안내 목록에 올린다 - 자동 NG는 아니고 사람이 직접 확인하라는 용도.
+    // isEventBased/isDateBasedTracker/itemCount 0/아직 재버전 안 됨 등 다른 이유로 docHistResult가
+    // null인 경우는 이 안내 목록의 취지(승인 이후라 자동 판정 불가)와 다르므로 올리지 않는다.
+    if (docHistResult === null && FINALIZED_STATUSES.has(record.status) && record.docHistoryManualCheckReason) {
+      docHistoryManualCheckTrackers.push({ trackerName: record.trackerName, reason: record.docHistoryManualCheckReason });
     }
 
     // 상태 규칙 (상태 규칙 + 리뷰 대상 버전 규칙 통합 - 같은 codebeamer 필드로 반영됨)
@@ -508,5 +524,5 @@ export function runAudit(records, options = {}) {
     record.detailComment = detailNgReasons;
   }
 
-  return { records, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers };
+  return { records, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers, docHistoryManualCheckTrackers };
 }

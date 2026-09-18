@@ -3,9 +3,9 @@
 // 이후 어디서도 안 쓰여서 뺐다). Excel 저장 대신 record 배열을 그대로 반환한다.
 
 import { mapWithConcurrency } from "./codebeamerClient.js";
-import { parseBaselineData, buildLatestBaselines } from "./baselines.js";
+import { parseBaselineData, buildLatestBaselines, buildAllBaselinesByTracker } from "./baselines.js";
 import { extractTargetVersionFromComment, isDateBasedTracker, stripTrailingQualifier, normalizeNameForRowMatch, extractProcessTag, matchConfiguredSuffix, toYYMMDD } from "./wikiTable.js";
-import { TRACKERS_EXEMPT_FROM_ITEM_LIST, TRACKER_NAME_ALIASES, ITEM_LIST_ENTRIES_WITHOUT_TRACKER, ITEM_LIST_ENTRIES_EXCLUDED_FROM_AUDIT, STATUS_NAME_ALIASES, REVIEW_REPORT_ADDITIONAL_TARGETS } from "./config.js";
+import { TRACKERS_EXEMPT_FROM_ITEM_LIST, ITEM_LIST_ENTRIES_WITHOUT_TRACKER, ITEM_LIST_ENTRIES_EXCLUDED_FROM_AUDIT, STATUS_NAME_ALIASES, REVIEW_REPORT_ADDITIONAL_TARGETS } from "./config.js";
 
 // codebeamer에서 읽어온 상태명이 표준 영어명이 아닌 다른 이름(예: 한글 "승인됨")이면
 // 규칙 엔진이 인식하는 영어명으로 바꾼다 (STATUS_NAME_ALIASES 참고).
@@ -21,6 +21,55 @@ const BRACKET_TAG_STRIP_RE = /\[.*?\]/g;
 
 function stripBracketTag(name) {
   return (name || "").replace(BRACKET_TAG_STRIP_RE, "").trim();
+}
+
+// ruleEngine.js의 PR_IN_DESC_RE와 동일한 패턴(하이픈 유무와 무관하게 PR 뒤 첫 숫자를 PR 번호로
+// 인식) - 여기서는 규칙 판정이 아니라 "문서 이력에 PR 번호가 있는지" 확인용으로 쓴다.
+const PR_IN_DESC_RE = /\bPR[^\d]*?(\d+)/gi;
+
+/**
+ * checkDocHistoryRule(ruleEngine.js)이 승인/베이스라인 완료 상태라 원래 방식(현재 열려있는
+ * PR과 최신 버전 설명 대조)으로는 판정할 수 없을 때 대신 쓰는 보조 확인. "마지막으로 확인해서
+ * 문제없었던 지점"(checkpointVersion - 문제가 있었으면 그 지점에서 전진하지 않고 그대로
+ * 있음, history.js 참고) 이후 새로 생긴 버전들의 설명에 PR 번호가 하나라도 적혀있는지,
+ * 적혀있다면 그 번호가 NC List에 실제 존재하는지만 본다 - 어떤 PR인지, 그 시점에 그 PR이
+ * 열려있었는지까지는 안 따진다(자동으로 완벽히 판정하려는 게 아니라, 사람이 직접 확인할
+ * 후보를 추리는 용도). 문제가 있으면 checkpoint가 전진하지 않으므로, 고쳐질 때까지 다음
+ * 감사에서도 같은 지점부터 다시 확인해 계속 안내된다.
+ * checkpointVersion을 baseline 목록에서 못 찾으면(첫 확인, 트래커명 변경 등) 최신 버전
+ * 하나만 본다.
+ */
+function findDocHistoryManualCheckReason(allBaselines, checkpointVersion, validPrNumbers) {
+  if (!allBaselines || allBaselines.length === 0) return null;
+
+  let sinceIndex;
+  if (checkpointVersion) {
+    let lastMatchIdx = -1;
+    for (let i = 0; i < allBaselines.length; i++) {
+      if (allBaselines[i].version === checkpointVersion) lastMatchIdx = i;
+    }
+    sinceIndex = lastMatchIdx >= 0 ? lastMatchIdx + 1 : allBaselines.length - 1;
+  } else {
+    sinceIndex = allBaselines.length - 1;
+  }
+
+  const newBaselines = allBaselines.slice(sinceIndex);
+  for (const b of newBaselines) {
+    const desc = b.description || "";
+    const prNums = [];
+    PR_IN_DESC_RE.lastIndex = 0;
+    let m;
+    while ((m = PR_IN_DESC_RE.exec(desc)) !== null) prNums.push(m[1]);
+
+    if (prNums.length === 0) {
+      return `버전 ${b.version ?? "?"} 설명에 PR 번호가 적혀있지 않음`;
+    }
+    const invalid = prNums.filter((n) => !validPrNumbers.has(n));
+    if (invalid.length > 0) {
+      return `버전 ${b.version ?? "?"} 설명에 적힌 PR 번호(${invalid.join(", ")})가 NC List에서 확인되지 않음`;
+    }
+  }
+  return null;
 }
 
 // ── CIL 파싱 ────────────────────────────────────────────────────────────────
@@ -60,18 +109,18 @@ function parseCilData(items) {
  *   불가능한 경우)이면, "등재"쪽에서도 아예 제외한다 - 감사 결과 표/트래커 선택 목록 어디에도
  *   나타나지 않는다.
  * - 이름 매칭은, 먼저 CIL 쪽 이름 앞에 흔히 붙는 "[SUP8_CIL-123456]" 같은 자동 생성 ID
- *   접두어를 트래커 쪽과 마찬가지로 떼어내고, 뜻이 다른 이름을 표기 차이(TRACKER_NAME_ALIASES)로
- *   정규화한 뒤, 공백/하이픈/언더스코어 유무·대소문자 차이는 무시하고 비교한다
- *   (normalizeNameForRowMatch - 화면상 거의 안 보이는 "괄호 앞 공백 하나 있고 없고" 같은 차이
- *   때문에 등재된 산출물이 미등재로 잘못 잡히는 걸 막기 위함). 단수/복수, 명사/형용사 등 그
- *   외의 단어 차이(Requirement/Requirements, Function/Functional 등)는 예외 없이 다른
- *   이름으로 취급한다 - 진짜 등재명이 다르면 미등재로 잡혀야 한다는 확인에 따른 것.
+ *   접두어를 트래커 쪽과 마찬가지로 떼어낸 뒤, 공백/하이픈/언더스코어 유무·대소문자 차이는
+ *   무시하고 비교한다(normalizeNameForRowMatch - 화면상 거의 안 보이는 "괄호 앞 공백 하나
+ *   있고 없고" 같은 차이 때문에 등재된 산출물이 미등재로 잘못 잡히는 걸 막기 위함). 단수/복수,
+ *   명사/형용사 등 그 외의 단어 차이(Requirement/Requirements, Function/Functional 등)는
+ *   예외 없이 다른 이름으로 취급한다 - 진짜 등재명이 다르면 미등재로 잡혀야 한다는 확인에
+ *   따른 것.
  * - 둘 다 있으면: 병합, TRACKER_uri가 비어있으면 트래커/카테고리 쪽 uri로 채움
  */
 function normalizeJoinName(name) {
   // CIL 아이템 이름 앞에 "[SUP8_CIL-123456]" 같은 자동 생성 ID 접두어가 붙어있는 경우가
   // 있어서, 트래커/카테고리 쪽과 마찬가지로 대괄호 태그를 뗀다(이미 안 붙어있으면 그대로).
-  const base = stripBracketTag(TRACKER_NAME_ALIASES[name] || name || "");
+  const base = stripBracketTag(name || "");
   return normalizeNameForRowMatch(base);
 }
 
@@ -184,39 +233,44 @@ function buildReviewReportJoinMap(mergedRows) {
 }
 
 // ── NCL(PR) 매칭 ─────────────────────────────────────────────────────────────
-async function fetchNclRelations(client, item) {
-  const itemName = item.name;
-  const itemStatus = (item.status || {}).name || "";
-  const results = [];
-  const resp = await client.getJsonSoft(`${client.baseUrlV3}/items/${item.id}/relations`);
-  if (resp.ok && resp.json) {
-    const incoming = resp.json.incomingAssociations || [];
-    if (incoming.length === 0) {
-      results.push({ pr: itemName, cilId: null, status: itemStatus });
-    } else {
-      for (const assoc of incoming) {
-        const revisionId = (assoc.itemRevision || {}).id;
-        if (revisionId) results.push({ pr: itemName, cilId: revisionId, status: itemStatus });
-      }
-    }
-  }
-  return results;
-}
-
-function buildNclPrMap(allRelations) {
-  const prNumRe = /(\d+)/;
-  const byCilId = new Map();
-  for (const r of allRelations) {
-    if (r.status === "Closed" || r.cilId == null) continue;
-    const m = prNumRe.exec(String(r.pr));
-    const prNum = m ? m[1] : "";
-    if (!byCilId.has(r.cilId)) byCilId.set(r.cilId, []);
-    byCilId.get(r.cilId).push(prNum);
-  }
-  const result = new Map();
-  for (const [cilId, nums] of byCilId) result.set(cilId, nums.join(", "));
-  return result;
-}
+// checkDocHistoryRule이 "이 문서에 실제로 연결된 열려있는 PR"을 대조하는 대신 "버전 이력에
+// PR 번호가 하나라도 적혀있고 그게 NC List에 존재하는지"만 보는 방식으로 바뀌면서(더 이상
+// record.prId를 아무도 안 씀), 이 아래 NCL 항목별 Related Item 개별 조회(그 무거운 50초짜리
+// 병목의 원인)가 전부 필요 없어졌다. 나중에 다시 "실제로 연결된 PR" 기준 대조가 필요해지면
+// 이 주석을 풀면 된다 - 지우지 않고 남겨둔다.
+// async function fetchNclRelations(client, item) {
+//   const itemName = item.name;
+//   const itemStatus = (item.status || {}).name || "";
+//   const results = [];
+//   const resp = await client.getJsonSoft(`${client.baseUrlV3}/items/${item.id}/relations`);
+//   if (resp.ok && resp.json) {
+//     const incoming = resp.json.incomingAssociations || [];
+//     if (incoming.length === 0) {
+//       results.push({ pr: itemName, cilId: null, status: itemStatus });
+//     } else {
+//       for (const assoc of incoming) {
+//         const revisionId = (assoc.itemRevision || {}).id;
+//         if (revisionId) results.push({ pr: itemName, cilId: revisionId, status: itemStatus });
+//       }
+//     }
+//   }
+//   return results;
+// }
+//
+// function buildNclPrMap(allRelations) {
+//   const prNumRe = /(\d+)/;
+//   const byCilId = new Map();
+//   for (const r of allRelations) {
+//     if (r.status === "Closed" || r.cilId == null) continue;
+//     const m = prNumRe.exec(String(r.pr));
+//     const prNum = m ? m[1] : "";
+//     if (!byCilId.has(r.cilId)) byCilId.set(r.cilId, []);
+//     byCilId.get(r.cilId).push(prNum);
+//   }
+//   const result = new Map();
+//   for (const [cilId, nums] of byCilId) result.set(cilId, nums.join(", "));
+//   return result;
+// }
 
 // ── 이벤트성 워크플로우 판별 (캐시) ──────────────────────────────────────────
 function makeEventBasedChecker(client) {
@@ -260,7 +314,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
       lastEdit: "",
       status: null,
       currentVersion: "미업로드",
-      prId: "",
+      validPrNumbers: new Set(),
       versioning: "",
       verDesc: "",
       reviewReportItemCount: "해당없음",
@@ -390,7 +444,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
     lastEdit: hInfo.last,
     status: hInfo.status,
     currentVersion: base.version || "미업로드",
-    prId: ctx.prMap.get(mergedRow.cilId) || "",
+    validPrNumbers: ctx.validPrNumbers,
     versioning: base.createdAt || "",
     verDesc: base.description || "",
     reviewReportItemCount: rrData.num,
@@ -405,6 +459,11 @@ async function processTrackerRow(client, mergedRow, ctx) {
     isEventBased: await ctx.isEventbasedWorkflow(uri),
     testResultClosedDate: dateBasedClosedDate,
     itemFetchIncomplete,
+    docHistoryManualCheckReason: findDocHistoryManualCheckReason(
+      ctx.allBaselinesByTracker.get(tName),
+      ctx.docHistoryCheckpoints[tName],
+      ctx.validPrNumbers
+    ),
   };
 }
 
@@ -459,7 +518,7 @@ export async function listRegisteredTrackerNames(client, { projectName, trackerC
  *   시작/완료할 때마다 불러준다.
  * @returns {{records: Array, unregisteredTrackers: Array<{trackerName, trackerUri}>, projectId: string}}
  */
-export async function collectAuditData(client, { projectName, trackerCil, trackerNcl, onlyTrackerNames = null, onProgress = null }) {
+export async function collectAuditData(client, { projectName, trackerCil, trackerNcl, onlyTrackerNames = null, onProgress = null, docHistoryCheckpoints = {} }) {
   const { userUri, allTrackers, registered, unregistered } = await loadMergedTrackerRows(client, { projectName, trackerCil, onProgress });
   const reviewReportUriMap = buildReviewReportJoinMap(registered);
 
@@ -473,23 +532,31 @@ export async function collectAuditData(client, { projectName, trackerCil, tracke
   const baselinesResp = await client.getJson(`https://codebeamer.slworld.com/cb/rest/projects/${projectId}/baselines`);
   const baselineRows = parseBaselineData(baselinesResp);
   const latestBaselines = buildLatestBaselines(baselineRows);
+  const allBaselinesByTracker = buildAllBaselinesByTracker(baselineRows);
 
-  // NCL(PR 매칭)
+  // NCL(PR 매칭) - 이제 "NC List에 실제 존재하는 PR 번호" 집합만 필요하다(문서 이력에 적힌
+  // PR 번호가 유효한지 대조용). 예전엔 각 PR이 어느 CIL 항목에 연결됐는지(Related Item)까지
+  // 개별로 조회했는데(그 50초짜리 병목), checkDocHistoryRule이 더 이상 그 대조를 안 해서
+  // 필요 없어졌다 - 아래 fetchNclRelations/buildNclPrMap 호출은 주석 처리, 필요해지면 복구.
   const nclTracker = allTrackers.find((t) => t.name === trackerNcl);
-  let prMap = new Map();
+  const validPrNumbers = new Set();
   if (nclTracker) {
     onProgress?.({ phase: "NCL(부적합 목록) 항목 조회 중..." });
     const nclItemsResult = await client.fetchAllItems(`${client.baseUrl}${nclTracker.uri}/items`, {
       onPage: (page, itemCount) => onProgress?.({ phase: `NCL(부적합 목록) 항목 조회 중... (${itemCount}건)` }),
     });
-    onProgress?.({ phase: "NCL-CIL 연결 관계 조회 중..." });
-    const allRelations = await mapWithConcurrency(nclItemsResult.items, 20, (item) => fetchNclRelations(client, item));
-    prMap = buildNclPrMap(allRelations.flat());
+    for (const item of nclItemsResult.items) {
+      const m = /(\d+)/.exec(item.name || "");
+      if (m) validPrNumbers.add(m[1]);
+    }
+    // onProgress?.({ phase: "NCL-CIL 연결 관계 조회 중..." });
+    // const allRelations = await mapWithConcurrency(nclItemsResult.items, 20, (item) => fetchNclRelations(client, item));
+    // prMap = buildNclPrMap(allRelations.flat());
   }
 
   onProgress?.({ phase: `감사 대상 트래커 ${targetRows.length}개 조회 시작...` });
   const isEventbasedWorkflow = makeEventBasedChecker(client);
-  const ctx = { reviewReportUriMap, latestBaselines, prMap, isEventbasedWorkflow };
+  const ctx = { reviewReportUriMap, latestBaselines, allBaselinesByTracker, docHistoryCheckpoints, validPrNumbers, isEventbasedWorkflow };
 
   let completed = 0;
   const results = await mapWithConcurrency(targetRows, 15, async (row) => {

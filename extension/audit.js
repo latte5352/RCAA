@@ -10,7 +10,7 @@ import { createClient } from "./lib/codebeamerClient.js";
 import { collectAuditData } from "./lib/collector.js";
 import { runAudit, DEFAULT_PERIODIC_CADENCE, DEFAULT_PERIODIC_ANCHOR } from "./lib/ruleEngine.js";
 import { PERIODIC_TRACKERS } from "./lib/periodicTrackers.js";
-import { diffAndUpdateHistory } from "./lib/history.js";
+import { diffAndUpdateHistory, loadHistorySnapshot } from "./lib/history.js";
 import { pushAllResults } from "./lib/pushResults.js";
 import { saveReviewState, loadReviewState } from "./lib/reviewState.js";
 import { checkUserProjectRole } from "./lib/memberRoles.js";
@@ -41,6 +41,8 @@ const versionFailWrap = document.getElementById("versionFailWrap");
 const versionFailList = document.getElementById("versionFailList");
 const manualStatusCheckWrap = document.getElementById("manualStatusCheckWrap");
 const manualStatusCheckList = document.getElementById("manualStatusCheckList");
+const docHistoryManualCheckWrap = document.getElementById("docHistoryManualCheckWrap");
+const docHistoryManualCheckList = document.getElementById("docHistoryManualCheckList");
 const incompleteFetchWrap = document.getElementById("incompleteFetchWrap");
 const incompleteFetchList = document.getElementById("incompleteFetchList");
 const toolbarRow = document.getElementById("toolbarRow");
@@ -66,6 +68,7 @@ let warningsData = {
   versionCheckFailures: [],
   incompleteFetchTrackers: [],
   manualStatusCheckTrackers: [],
+  docHistoryManualCheckTrackers: [],
 };
 let reviewStatus = "pending"; // "pending" | "applied"
 let currentProjectId = null;
@@ -318,6 +321,7 @@ function renderWarnings(data) {
     versionCheckFailures = [],
     incompleteFetchTrackers = [],
     manualStatusCheckTrackers = [],
+    docHistoryManualCheckTrackers = [],
   } = data;
 
   if (unregisteredTrackers.length) {
@@ -365,6 +369,21 @@ function renderWarnings(data) {
   if (manualStatusCheckTrackers.length) {
     renderWarnList(manualStatusCheckList, manualStatusCheckTrackers, (name) => simpleRow(name));
     manualStatusCheckWrap.classList.remove("hidden");
+  }
+  if (docHistoryManualCheckTrackers.length) {
+    renderWarnList(docHistoryManualCheckList, docHistoryManualCheckTrackers, (f) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const name = document.createElement("div");
+      name.textContent = f.trackerName;
+      row.appendChild(name);
+      const reason = document.createElement("div");
+      reason.className = "version-fail-reason";
+      reason.textContent = f.reason;
+      row.appendChild(reason);
+      return row;
+    });
+    docHistoryManualCheckWrap.classList.remove("hidden");
   }
   if (incompleteFetchTrackers.length) {
     renderWarnList(incompleteFetchList, incompleteFetchTrackers, (name) => simpleRow(name));
@@ -458,14 +477,24 @@ async function runNewAudit(client, username) {
     ? `선택한 트래커 ${onlyTrackerNames.length}개만`
     : "전체 트래커";
   setProgress(10, `데이터 수집 중 (${scopeText} - codebeamer에서 트래커/베이스라인/리뷰레포트 조회)...`);
+  // "마지막으로 확인해서 문제없었던 버전 이후 새로 생긴 버전에 PR 기재가 빠졌는지" 확인하려면
+  // 데이터 수집 단계에서부터 그 체크포인트를 알아야 한다 - diffAndUpdateHistory는 이번 결과로
+  // 스냅샷을 덮어써버리므로, 그 전에 먼저 읽기 전용으로 조회해둔다.
+  const previousSnapshot = await loadHistorySnapshot(projectName);
+  const docHistoryCheckpoints = {};
+  for (const [name, entry] of Object.entries(previousSnapshot)) {
+    docHistoryCheckpoints[name] = entry.docHistoryCheckedVersion;
+  }
   const { records, unregisteredTrackers, projectId } = await collectAuditData(client, {
-    projectName, trackerCil, trackerNcl, onlyTrackerNames, onProgress: handleCollectionProgress,
+    projectName, trackerCil, trackerNcl, onlyTrackerNames, onProgress: handleCollectionProgress, docHistoryCheckpoints,
   });
   currentProjectId = projectId;
   await applyCmRoleGate(client, projectId, username);
 
   setProgress(60, "감사 규칙 검사 중...");
-  const { records: auditedRecords, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers } = runAudit(records, {
+  const {
+    records: auditedRecords, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers, docHistoryManualCheckTrackers,
+  } = runAudit(records, {
     cadence, anchor, periodicTrackers: PERIODIC_TRACKERS,
   });
   auditRecords = auditedRecords;
@@ -473,7 +502,10 @@ async function runNewAudit(client, username) {
   setProgress(80, "지난 감사와 비교 중...");
   const { newTrackers, changedTrackers } = await diffAndUpdateHistory(projectName, auditedRecords);
 
-  warningsData = { unregisteredTrackers, newTrackers, changedTrackers, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers };
+  warningsData = {
+    unregisteredTrackers, newTrackers, changedTrackers, versionCheckFailures, incompleteFetchTrackers,
+    manualStatusCheckTrackers, docHistoryManualCheckTrackers,
+  };
 
   setProgress(100, "검토 대기 중 (codebeamer에는 아직 반영 안 됨)");
 

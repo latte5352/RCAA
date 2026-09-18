@@ -13,15 +13,33 @@ async function loadSnapshot(projectName) {
   return stored[key] || {};
 }
 
+/**
+ * 직전 스냅샷을 읽기만 한다(diffAndUpdateHistory와 달리 갱신하지 않음) - 문서 이력 PR 기재
+ * 확인을 위해, 감사 데이터 수집 시작 전에 "이 트래커를 마지막으로 확인해서 문제없었던 버전이
+ * 뭐였는지"(docHistoryCheckedVersion) 미리 알아야 하는 곳(collector.js)에서 쓴다.
+ * @returns {Promise<Object<string, {status, version, docHistoryCheckedVersion}>>}
+ */
+export async function loadHistorySnapshot(projectName) {
+  return loadSnapshot(projectName);
+}
+
 async function saveSnapshot(projectName, snapshot) {
   await chrome.storage.local.set({ [historyKey(projectName)]: snapshot });
 }
 
-function extractCurrentSnapshot(records) {
+// docHistoryCheckedVersion: "문서 이력에 PR 기재가 빠진 게 없다고 마지막으로 확인된 버전".
+// 이번에 문제가 없었으면(record.docHistoryManualCheckReason이 없으면) 지금 버전까지 전진시키고,
+// 문제가 있었으면 그대로 둬서 - 고쳐지기 전까지는 다음 감사에서도 같은 지점부터 다시 확인해
+// "직접 확인 필요" 목록에 계속 뜨게 한다(한 번 알려주고 조용히 사라지는 것을 막기 위함).
+function extractCurrentSnapshot(records, previous) {
   const snapshot = {};
   for (const r of records) {
     if (!r.trackerName) continue;
-    snapshot[r.trackerName] = { status: r.status || null, version: r.currentVersion || null };
+    const prevEntry = previous[r.trackerName] || {};
+    const docHistoryCheckedVersion = r.docHistoryManualCheckReason
+      ? prevEntry.docHistoryCheckedVersion ?? null
+      : r.currentVersion || null;
+    snapshot[r.trackerName] = { status: r.status || null, version: r.currentVersion || null, docHistoryCheckedVersion };
   }
   return snapshot;
 }
@@ -36,7 +54,7 @@ function extractCurrentSnapshot(records) {
  */
 export async function diffAndUpdateHistory(projectName, records) {
   const previous = await loadSnapshot(projectName);
-  const current = extractCurrentSnapshot(records);
+  const current = extractCurrentSnapshot(records, previous);
 
   const newTrackers = Object.keys(current)
     .filter((name) => !(name in previous))

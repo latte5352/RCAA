@@ -23,12 +23,6 @@ export const TRACKERS_EXEMPT_FROM_ITEM_LIST = [
   "Configuration Item List",
 ];
 
-// 트래커/카테고리 이름과 실제 Item List(CIL) 등재명이 표기만 살짝 다른 경우의 별칭 매핑.
-// 왼쪽 표기를 오른쪽 표기와 같은 이름으로 취급해서 미등재 오탐을 막는다.
-export const TRACKER_NAME_ALIASES = {
-  "Kick off Meeting Record": "Kick-off Meeting Record",
-};
-
 // 일부 트래커 워크플로우가 표준 영어 상태명 대신 다른 이름(예: 한글 "승인됨")을 쓰는 경우의
 // 별칭 매핑. 규칙 엔진은 전부 영어 상태명("Approved" 등)으로 비교하므로, 여기 있는 이름은
 // codebeamer에서 값을 읽어올 때 바로 오른쪽(표준 영어명)으로 바꿔서 취급한다.

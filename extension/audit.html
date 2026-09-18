@@ -37,6 +37,7 @@
   #changedTrackersWrap { background: #fff8e1; border: 1px solid #f0c14b; color: #b8860b; }
   #versionFailWrap { background: #fdf0e6; border: 1px solid #e8a05a; color: #a85c1a; }
   #manualStatusCheckWrap { background: #f1e8fd; border: 1px solid #b39ddb; color: #5e35b1; }
+  #docHistoryManualCheckWrap { background: #e6f4ea; border: 1px solid #81c784; color: #2e7d32; }
   #incompleteFetchWrap { background: #fdecea; border: 1px solid #e57373; color: #c0392b; }
   #cmRoleBlockWrap { background: #2d2d2d; border: 1px solid #c0392b; color: #fff; }
   #cmRoleBlockWrap h2 { color: #ff8a80; }
@@ -101,6 +102,10 @@
     <div id="manualStatusCheckWrap" class="warn hidden">
       <h2>🙋 상태 규칙 자동 판정 불가 (항상 직접 확인 필요)</h2>
       <div id="manualStatusCheckList"></div>
+    </div>
+    <div id="docHistoryManualCheckWrap" class="warn hidden">
+      <h2>📝 문서 이력 PR 기재 확인 필요</h2>
+      <div id="docHistoryManualCheckList"></div>
     </div>
     <div id="incompleteFetchWrap" class="warn hidden">
       <h2>⚠ 데이터 조회 불완전 (결과 신뢰 불가 - 재감사 권장)</h2>

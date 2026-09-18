@@ -97,3 +97,37 @@ export function buildLatestBaselines(baselineRows) {
 
   return byTracker;
 }
+
+/**
+ * 트래커별로 baseline 전체 이력을 만든다(최신 것 하나만 남기는 buildLatestBaselines와 달리
+ * 전부 유지, createdAt 오름차순) - "지난 감사 이후 새로 생긴 버전들"을 순서대로 뽑아 문서
+ * 이력에 PR이 누락되지 않았는지 확인할 때 쓴다. 승인 스탬프 baseline(설명이 보통 비어있음)은
+ * buildLatestBaselines와 똑같이, 같은 트래커·같은 버전의 비-승인 형제 baseline 설명으로
+ * 채운다 - 이 보정을 최신 것 하나가 아니라 이력에 있는 모든 baseline에 동일하게 적용한다.
+ *
+ * @returns {Map<string, Array<object>>} 트래커명 -> baseline 배열(createdAt 오름차순)
+ */
+export function buildAllBaselinesByTracker(baselineRows) {
+  const byTracker = new Map();
+  for (const row of baselineRows) {
+    if (!byTracker.has(row.tracker)) byTracker.set(row.tracker, []);
+    byTracker.get(row.tracker).push({ ...row });
+  }
+
+  for (const rows of byTracker.values()) {
+    rows.sort((a, b) => {
+      const ta = a.createdAt ? Date.parse(a.createdAt) : -Infinity;
+      const tb = b.createdAt ? Date.parse(b.createdAt) : -Infinity;
+      return ta - tb; // createdAt 오름차순 (예전 것부터)
+    });
+    for (const base of rows) {
+      if (!(base.versionType || "").includes("Approved")) continue;
+      const sibling = rows.find(
+        (r) => r.version === base.version && !(r.versionType || "").includes("Approved")
+      );
+      if (sibling) base.description = sibling.description;
+    }
+  }
+
+  return byTracker;
+}
