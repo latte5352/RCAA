@@ -28,12 +28,16 @@ export async function pushRecordResult(client, record) {
   const itemUrl = `https://codebeamer.slworld.com/cb/rest/v3/items/${itemId}`;
   const commentText = record.comment || "이상 없음";
 
-  const choiceUpdates = {
-    1016: record.saveRule ?? 1,
-    1011: record.versionRule ?? 1,
-    1012: record.docHistoryRule ?? 1,
-    1013: record.statusRule ?? 1,
-  };
+  // codebeamer에서 이 네 필드의 "--"(해당 없음)는 별도 선택지 ID가 아니라 필드 자체가
+  // customFields에 없는 상태다(값 1=OK, 2=NG만 실제로 존재 - 확인 완료). 그래서 규칙이
+  // null(N/A - 아직 자동 판정 못 했거나 대상이 아님)이면 그 필드를 아예 반영 데이터에서
+  // 빼서 codebeamer에 있는 값(없으면 "--", 있으면 예전 값)을 그대로 둔다 - 예전처럼 무조건
+  // 1(OK)로 덮어쓰면 사람이 확인도 안 한 걸 OK로 잘못 보고하게 된다.
+  const choiceUpdates = {};
+  if (record.saveRule != null) choiceUpdates[1016] = record.saveRule;
+  if (record.versionRule != null) choiceUpdates[1011] = record.versionRule;
+  if (record.docHistoryRule != null) choiceUpdates[1012] = record.docHistoryRule;
+  if (record.statusRule != null) choiceUpdates[1013] = record.statusRule;
   const isNgFound = Object.values(choiceUpdates).some((v) => v === 2);
 
   let itemData;

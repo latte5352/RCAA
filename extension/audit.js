@@ -49,10 +49,12 @@ const toolbarRow = document.getElementById("toolbarRow");
 const legend = document.getElementById("legend");
 const searchInput = document.getElementById("searchInput");
 const viewFilterSelect = document.getElementById("viewFilterSelect");
+const manualOnlyBtn = document.getElementById("manualOnlyBtn");
 const selectAllBtn = document.getElementById("selectAllBtn");
 const selectNoneBtn = document.getElementById("selectNoneBtn");
 const downloadBtn = document.getElementById("downloadBtn");
 const matchCount = document.getElementById("matchCount");
+const scrollTopBtn = document.getElementById("scrollTopBtn");
 const emptyEl = document.getElementById("empty");
 const itemsTable = document.getElementById("itemsTable");
 const itemsBody = document.getElementById("itemsBody");
@@ -146,12 +148,105 @@ function handleCollectionProgress(evt) {
   }
 }
 
-function badge(label, ruleValue) {
+// isManualPending: 이 규칙이 "직접확인 필요" 대상인데 아직 사람이 판정을 안 고른 상태.
+// 그냥 검사 대상이 아니라서 "-"인 경우(na)와 겉보기가 똑같으면, 뭘 직접 봐야 하는지 배지만
+// 보고는 구분이 안 된다 - 그래서 이 경우만 따로 색을 준다(amber).
+function badge(label, ruleValue, ruleKey, isManualPending) {
   const span = document.createElement("span");
-  const kind = ruleValue === 2 ? "ng" : ruleValue === 1 ? "ok" : "na"; // null = 해당 규칙 검사 대상 아님
+  const kind = isManualPending ? "manual" : ruleValue === 2 ? "ng" : ruleValue === 1 ? "ok" : "na";
   span.className = `badge ${kind}`;
   span.textContent = label;
+  if (ruleKey) span.dataset.rule = ruleKey; // 직접확인 입력 시 이 배지를 찾아 미리보기로 갱신하는 용도
   return span;
+}
+
+// "직접확인 필요"로 뜨는 두 가지(🙋 상태 규칙 자동 판정 불가, 📝 문서 이력 PR 기재 확인 필요)만
+// 여기서 사람이 OK/NG/N-A를 직접 고르고 코멘트를 쓰게 강제한다. 이벤트성/Test Result류/승인
+// 완료로 버전 규칙이 아예 스킵되는 경우처럼 "원래 그 규칙 대상이 아닌" N/A는 대상이 아니다 -
+// 그런 건 도구가 이미 정확히 판단한 거라 사람이 매번 다시 확인할 이유가 없다.
+function getManualCheckFlags(record) {
+  const flags = [];
+  if ((warningsData.manualStatusCheckTrackers || []).includes(record.trackerName)) {
+    flags.push({ rule: "statusRule", label: "상태", reason: null });
+  }
+  const docHistEntry = (warningsData.docHistoryManualCheckTrackers || []).find(
+    (t) => t.trackerName === record.trackerName
+  );
+  if (docHistEntry) {
+    flags.push({ rule: "docHistoryRule", label: "이력", reason: docHistEntry.reason });
+  }
+  return flags;
+}
+
+function createManualRow(record, manualFlags) {
+  const tr = document.createElement("tr");
+  tr.className = "manual-row";
+  tr.dataset.cilId = record.cilId;
+
+  tr.appendChild(document.createElement("td")); // 체크박스 칸 자리 맞추기용 빈 칸
+
+  const content = document.createElement("td");
+  content.colSpan = 3;
+  content.className = "manual-content";
+
+  const title = document.createElement("div");
+  title.className = "manual-title";
+  title.textContent = "🙋 직접 확인 필요 - 아래 판정을 입력해야 반영할 수 있습니다";
+  content.appendChild(title);
+
+  for (const flag of manualFlags) {
+    const fieldRow = document.createElement("div");
+    fieldRow.className = "manual-field-row";
+
+    const label = document.createElement("span");
+    label.className = "manual-field-label";
+    label.textContent = `${flag.label} 규칙:`;
+    fieldRow.appendChild(label);
+
+    const select = document.createElement("select");
+    select.className = "manual-verdict-select";
+    select.dataset.rule = flag.rule;
+    select.innerHTML = `
+      <option value="">선택해주세요</option>
+      <option value="1">OK</option>
+      <option value="2">NG</option>
+      <option value="0">N/A (해당 없음)</option>
+    `;
+    fieldRow.appendChild(select);
+
+    if (flag.reason) {
+      const reasonSpan = document.createElement("span");
+      reasonSpan.className = "manual-field-reason";
+      reasonSpan.textContent = `(참고: ${flag.reason})`;
+      fieldRow.appendChild(reasonSpan);
+    }
+
+    content.appendChild(fieldRow);
+  }
+
+  const commentLabel = document.createElement("div");
+  commentLabel.className = "manual-comment-label";
+  commentLabel.textContent = "직접 확인 코멘트 (위에서 NG를 하나라도 고르면 필수 - 기존 자동 코멘트에 이어붙습니다):";
+  content.appendChild(commentLabel);
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "manual-comment-input";
+  textarea.rows = 2;
+  content.appendChild(textarea);
+
+  tr.appendChild(content);
+  return tr;
+}
+
+// 한 트래커 행(tr)의 왼쪽 색상 표시(빨강=NG 있음, 노랑=직접확인 미입력, 초록=이상 없음)를
+// 갱신한다 - 목록이 길 때 한눈에 훑어보기 위한 용도라, 배지 상태가 바뀔 때마다 다시 불러야 한다.
+function updateRowAccent(mainRow) {
+  const manualRow = mainRow.nextElementSibling;
+  const pendingManual = manualRow && manualRow.classList.contains("manual-row")
+    && Array.from(manualRow.querySelectorAll(".manual-verdict-select")).some((s) => s.value === "");
+  const hasNg = Array.from(mainRow.querySelectorAll(".badge")).some((b) => b.classList.contains("ng"));
+  mainRow.classList.remove("row-ng", "row-manual", "row-ok");
+  mainRow.classList.add(pendingManual ? "row-manual" : hasNg ? "row-ng" : "row-ok");
 }
 
 function renderItemsTable(records, excludedCilIds = new Set()) {
@@ -172,6 +267,10 @@ function renderItemsTable(records, excludedCilIds = new Set()) {
     row.dataset.versionRule = String(record.versionRule);
     row.dataset.docHistoryRule = String(record.docHistoryRule);
     row.dataset.statusRule = String(record.statusRule);
+    // "직접확인 필요만 보기" 필터용 - 이 트래커가 사람이 직접 판정해야 하는 항목(🙋/📝)인지.
+    const manualFlags = getManualCheckFlags(record);
+    const manualRuleKeys = new Set(manualFlags.map((f) => f.rule));
+    row.dataset.hasManual = String(manualFlags.length > 0);
 
     const checkCell = document.createElement("td");
     const checkbox = document.createElement("input");
@@ -188,25 +287,48 @@ function renderItemsTable(records, excludedCilIds = new Set()) {
 
     const badgesCell = document.createElement("td");
     badgesCell.className = "col-badges";
-    badgesCell.appendChild(badge("저장", record.saveRule));
-    badgesCell.appendChild(badge("버전", record.versionRule));
-    badgesCell.appendChild(badge("이력", record.docHistoryRule));
-    badgesCell.appendChild(badge("상태", record.statusRule));
+    const badgesGrid = document.createElement("div");
+    badgesGrid.className = "badges-grid";
+    badgesGrid.appendChild(badge("저장", record.saveRule, "saveRule", manualRuleKeys.has("saveRule")));
+    badgesGrid.appendChild(badge("버전", record.versionRule, "versionRule", manualRuleKeys.has("versionRule")));
+    badgesGrid.appendChild(badge("이력", record.docHistoryRule, "docHistoryRule", manualRuleKeys.has("docHistoryRule")));
+    badgesGrid.appendChild(badge("상태", record.statusRule, "statusRule", manualRuleKeys.has("statusRule")));
+    badgesCell.appendChild(badgesGrid);
     row.appendChild(badgesCell);
 
     const commentCell = document.createElement("td");
-    commentCell.className = "col-comment";
+    commentCell.className = "col-comment" + (record.comment ? "" : " default");
     commentCell.textContent = record.comment || "이상 없음";
+    if (record.comment) commentCell.title = record.comment;
     row.appendChild(commentCell);
 
     itemsBody.appendChild(row);
+
+    if (manualFlags.length > 0) {
+      itemsBody.appendChild(createManualRow(record, manualFlags));
+    }
+    updateRowAccent(row);
   }
 
   itemsTable.classList.remove("hidden");
   toolbarRow.classList.remove("hidden");
   legend.classList.remove("hidden");
   updateMatchCount();
+  updateStickyOffsets();
 }
+
+// 검색창/필터 버튼(#toolbarRow)과 표 헤더(thead)가 header 아래에 겹치지 않고 딱 붙어서
+// 스크롤을 오래 내려도 계속 보이게, 실제 렌더된 높이를 읽어 CSS 변수로 넘긴다.
+function updateStickyOffsets() {
+  document.documentElement.style.setProperty("--header-h", `${document.querySelector("header").offsetHeight}px`);
+  document.documentElement.style.setProperty("--toolbar-h", `${toolbarRow.offsetHeight}px`);
+}
+window.addEventListener("resize", updateStickyOffsets);
+
+window.addEventListener("scroll", () => {
+  scrollTopBtn.classList.toggle("hidden", window.scrollY < 400);
+});
+scrollTopBtn.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
 
 const BOM = "﻿"; // 엑셀에서 CSV를 열었을 때 한글이 깨지지 않게 하는 UTF-8 BOM
 
@@ -252,27 +374,40 @@ function downloadRecordsAsCsv() {
 downloadBtn.addEventListener("click", downloadRecordsAsCsv);
 
 function updateMatchCount() {
-  const rows = Array.from(itemsBody.querySelectorAll("tr"));
+  // .manual-row는 별도 트래커 행이 아니라 그 앞 행의 "직접확인 입력창"이라 개수에서 뺀다.
+  const rows = Array.from(itemsBody.querySelectorAll("tr:not(.manual-row)"));
   const visible = rows.filter((r) => !r.classList.contains("hidden"));
   matchCount.textContent = `${visible.length} / ${rows.length}개 표시 중`;
 }
 
+let manualOnlyActive = false;
+
 function applyFilters() {
   const query = searchInput.value.trim().toLowerCase();
   const view = viewFilterSelect.value; // "" | "ng" | "saveRule" | "versionRule" | "docHistoryRule" | "statusRule"
-  itemsBody.querySelectorAll("tr").forEach((row) => {
+  itemsBody.querySelectorAll("tr:not(.manual-row)").forEach((row) => {
     const matchesSearch = query === "" || row.dataset.searchText.includes(query);
     let matchesView;
     if (view === "") matchesView = true; // 전체 보기
     else if (view === "ng") matchesView = row.dataset.isNg === "true"; // 전체 규칙 중 하나라도 NG
     else matchesView = row.dataset[view] === "2"; // 특정 규칙만 NG
-    row.classList.toggle("hidden", !matchesSearch || !matchesView);
+    const matchesManual = !manualOnlyActive || row.dataset.hasManual === "true";
+    const hidden = !matchesSearch || !matchesView || !matchesManual;
+    row.classList.toggle("hidden", hidden);
+    // 바로 다음이 이 행의 "직접확인 입력창"(.manual-row)이면 같이 보이고/숨겨지게 한다.
+    const next = row.nextElementSibling;
+    if (next && next.classList.contains("manual-row")) next.classList.toggle("hidden", hidden);
   });
   updateMatchCount();
 }
 
 searchInput.addEventListener("input", applyFilters);
 viewFilterSelect.addEventListener("change", applyFilters);
+manualOnlyBtn.addEventListener("click", () => {
+  manualOnlyActive = !manualOnlyActive;
+  manualOnlyBtn.classList.toggle("active", manualOnlyActive);
+  applyFilters();
+});
 
 function getExcludedCilIds() {
   return new Set(
@@ -309,11 +444,28 @@ selectNoneBtn.addEventListener("click", () => {
 });
 itemsBody.addEventListener("change", (e) => {
   if (e.target.matches('input[type="checkbox"]')) persistSelectionIfPending();
+  if (e.target.matches(".manual-verdict-select")) {
+    // 사람이 고른 판정을 위쪽 배지에 미리보기로 반영한다(실제 record는 반영 버튼 누를 때
+    // 합쳐짐 - persistReviewState도 그때 저장되므로, 이 미리보기는 새로고침하면 사라진다).
+    const manualRow = e.target.closest("tr.manual-row");
+    const mainRow = manualRow.previousElementSibling;
+    const rule = e.target.dataset.rule;
+    const badgeEl = mainRow.querySelector(`.badge[data-rule="${rule}"]`);
+    // ""(아직 선택 안 함)은 여전히 "직접확인 필요" amber로 남겨두고, "0"(사람이 N/A로 명시적
+    // 판정)만 na 회색으로 바꾼다 - 안 그러면 "아직 안 고름"과 "직접 N/A로 판정함"이 똑같아 보인다.
+    const kind = e.target.value === "2" ? "ng" : e.target.value === "1" ? "ok" : e.target.value === "0" ? "na" : "manual";
+    if (badgeEl) badgeEl.className = `badge ${kind}`;
+    manualRow.classList.remove("problem");
+    updateRowAccent(mainRow);
+  }
 });
 
 function renderWarnList(container, items, render) {
   container.innerHTML = "";
   for (const item of items) container.appendChild(render(item));
+  const wrap = container.closest(".warn");
+  const countEl = wrap && wrap.querySelector(".warn-count");
+  if (countEl) countEl.textContent = `(${items.length})`;
 }
 
 function simpleRow(text) {
@@ -409,6 +561,75 @@ function setControlsEnabled(enabled) {
   itemsBody.querySelectorAll('input[type="checkbox"]').forEach((cb) => (cb.disabled = !enabled));
 }
 
+// "직접확인 필요" 입력창(.manual-row) 하나당 그 위 트래커 행, 고른 판정들, 코멘트를 모아 반환한다.
+function collectManualRowInputs() {
+  return Array.from(itemsBody.querySelectorAll("tr.manual-row")).map((manualRow) => {
+    const mainRow = manualRow.previousElementSibling;
+    const verdicts = {};
+    manualRow.querySelectorAll(".manual-verdict-select").forEach((select) => {
+      verdicts[select.dataset.rule] = select.value; // "" | "0"(N/A) | "1"(OK) | "2"(NG)
+    });
+    const comment = manualRow.querySelector(".manual-comment-input").value.trim();
+    return { cilId: Number(manualRow.dataset.cilId), mainRow, manualRow, verdicts, comment };
+  });
+}
+
+// 반영 대상(체크된 것)에 한해서만 검증한다 - 체크 해제해서 이번엔 안 올릴 항목까지 억지로
+// 채우게 하면 안 되므로. 문제가 있으면 그 입력창에 problem 표시를 남기고, 문제 목록을 반환한다.
+function validateManualInputs(excludedCilIds) {
+  const problems = [];
+  for (const entry of collectManualRowInputs()) {
+    entry.manualRow.classList.remove("problem");
+    if (excludedCilIds.has(entry.cilId)) continue;
+
+    const trackerName = entry.mainRow.querySelector(".col-name").textContent;
+    const values = Object.values(entry.verdicts);
+    if (values.some((v) => v === "")) {
+      problems.push({ trackerName, reason: "직접확인 판정을 다 선택해주세요", row: entry.manualRow });
+      continue;
+    }
+    if (values.includes("2") && !entry.comment) {
+      problems.push({ trackerName, reason: "NG로 판정한 항목이 있어 코멘트를 적어야 합니다", row: entry.manualRow });
+    }
+  }
+  for (const p of problems) p.row.classList.add("problem");
+  return problems;
+}
+
+function showManualValidationProblems(problems) {
+  statusEl.innerHTML = "";
+  const title = document.createElement("div");
+  title.className = "validation-title";
+  title.textContent = "⚠ 반영하기 전에 아래 \"직접확인\" 항목을 먼저 채워주세요:";
+  statusEl.appendChild(title);
+  for (const p of problems) {
+    const line = document.createElement("div");
+    line.className = "validation-line";
+    line.textContent = `- ${p.trackerName}: ${p.reason}`;
+    statusEl.appendChild(line);
+  }
+  problems[0].row.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// 검증을 통과한 뒤, 사람이 고른 직접확인 판정/코멘트를 실제 record에 합쳐 넣는다. 자동으로
+// 만들어진 코멘트(ngReasons)는 절대 지우지 않고 뒤에 이어붙인다 - 안 그러면 이미 적혀있던
+// 자동 NG 사유(예: 상태 규칙 위반)가 사람이 새로 적은 코멘트로 덮여 사라져버린다.
+function applyManualInputsToRecords(excludedCilIds) {
+  for (const entry of collectManualRowInputs()) {
+    if (excludedCilIds.has(entry.cilId)) continue;
+    const record = auditRecords.find((r) => r.cilId === entry.cilId);
+    if (!record) continue;
+
+    for (const [rule, value] of Object.entries(entry.verdicts)) {
+      record[rule] = value === "1" ? 1 : value === "2" ? 2 : null; // "0"(N/A)과 ""는 둘 다 null
+    }
+    if (entry.comment) {
+      const addition = `[직접확인] ${entry.comment}`;
+      record.comment = record.comment ? `${record.comment} / ${addition}` : addition;
+    }
+  }
+}
+
 applyBtn.addEventListener("click", async () => {
   if (cmRoleBlocked) {
     statusEl.textContent = `CM 권한이 없어서 반영할 수 없습니다.`;
@@ -419,9 +640,17 @@ applyBtn.addEventListener("click", async () => {
     statusEl.textContent = "로그인이 만료되었습니다. side panel에서 다시 로그인해주세요.";
     return;
   }
-  const client = createClient({ baseUrl: BASE_URL, baseUrlV3: BASE_URL_V3, ...credentials });
 
   const excludedCilIds = getExcludedCilIds();
+
+  const problems = validateManualInputs(excludedCilIds);
+  if (problems.length > 0) {
+    showManualValidationProblems(problems);
+    return;
+  }
+  applyManualInputsToRecords(excludedCilIds);
+
+  const client = createClient({ baseUrl: BASE_URL, baseUrlV3: BASE_URL_V3, ...credentials });
 
   setControlsEnabled(false);
   statusEl.textContent = "codebeamer에 반영 중...";
