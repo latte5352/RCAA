@@ -19,8 +19,8 @@
 
   .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
   #searchInput { flex: 1; min-width: 220px; padding: 9px 12px; font-size: 14px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
-  #ngOnlyLabel { display: flex; align-items: center; gap: 5px; font-size: 13px; color: #444; cursor: pointer; white-space: nowrap; }
-  #ngOnlyLabel input { width: auto; margin: 0; }
+  #viewFilterLabel { font-size: 13px; color: #666; white-space: nowrap; }
+  #viewFilterSelect { padding: 8px 12px; font-size: 14px; font-weight: 600; color: #333; border: 1px solid #bbc4d0; border-radius: 4px; background: #eef1f5; }
   button { cursor: pointer; padding: 8px 14px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
   button:hover { background: #f0f0f0; }
   button:disabled { opacity: .5; cursor: default; }
@@ -117,7 +117,15 @@
 
     <div class="toolbar hidden" id="toolbarRow">
       <input type="text" id="searchInput" placeholder="산출물명 또는 코멘트로 검색...">
-      <label id="ngOnlyLabel"><input type="checkbox" id="ngOnlyToggle">NG만 보기</label>
+      <label id="viewFilterLabel" for="viewFilterSelect">보기</label>
+      <select id="viewFilterSelect" title="보고 싶은 범위를 골라주세요">
+        <option value="">전체 보기</option>
+        <option value="ng">NG만 보기 (전체 규칙)</option>
+        <option value="saveRule">저장 규칙 위반만</option>
+        <option value="versionRule">버전 규칙 위반만</option>
+        <option value="docHistoryRule">이력 규칙 위반만</option>
+        <option value="statusRule">상태 규칙 위반만</option>
+      </select>
       <button id="selectAllBtn" type="button">전체 선택</button>
       <button id="selectNoneBtn" type="button">전체 해제</button>
       <button id="downloadBtn" type="button">결과 파일 다운로드</button>

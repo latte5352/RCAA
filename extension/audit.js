@@ -48,7 +48,7 @@ const incompleteFetchList = document.getElementById("incompleteFetchList");
 const toolbarRow = document.getElementById("toolbarRow");
 const legend = document.getElementById("legend");
 const searchInput = document.getElementById("searchInput");
-const ngOnlyToggle = document.getElementById("ngOnlyToggle");
+const viewFilterSelect = document.getElementById("viewFilterSelect");
 const selectAllBtn = document.getElementById("selectAllBtn");
 const selectNoneBtn = document.getElementById("selectNoneBtn");
 const downloadBtn = document.getElementById("downloadBtn");
@@ -167,6 +167,11 @@ function renderItemsTable(records, excludedCilIds = new Set()) {
     row.dataset.searchText = `${record.trackerName} ${record.comment || ""}`.toLowerCase();
     const isNg = [record.saveRule, record.versionRule, record.docHistoryRule, record.statusRule].includes(2);
     row.dataset.isNg = String(isNg);
+    // 규칙별로 위반만 모아보기 필터용 - 각 규칙 값(1=OK, 2=NG, null=대상 아님)을 그대로 저장.
+    row.dataset.saveRule = String(record.saveRule);
+    row.dataset.versionRule = String(record.versionRule);
+    row.dataset.docHistoryRule = String(record.docHistoryRule);
+    row.dataset.statusRule = String(record.statusRule);
 
     const checkCell = document.createElement("td");
     const checkbox = document.createElement("input");
@@ -254,17 +259,20 @@ function updateMatchCount() {
 
 function applyFilters() {
   const query = searchInput.value.trim().toLowerCase();
-  const ngOnly = ngOnlyToggle.checked;
+  const view = viewFilterSelect.value; // "" | "ng" | "saveRule" | "versionRule" | "docHistoryRule" | "statusRule"
   itemsBody.querySelectorAll("tr").forEach((row) => {
     const matchesSearch = query === "" || row.dataset.searchText.includes(query);
-    const matchesNg = !ngOnly || row.dataset.isNg === "true";
-    row.classList.toggle("hidden", !matchesSearch || !matchesNg);
+    let matchesView;
+    if (view === "") matchesView = true; // 전체 보기
+    else if (view === "ng") matchesView = row.dataset.isNg === "true"; // 전체 규칙 중 하나라도 NG
+    else matchesView = row.dataset[view] === "2"; // 특정 규칙만 NG
+    row.classList.toggle("hidden", !matchesSearch || !matchesView);
   });
   updateMatchCount();
 }
 
 searchInput.addEventListener("input", applyFilters);
-ngOnlyToggle.addEventListener("change", applyFilters);
+viewFilterSelect.addEventListener("change", applyFilters);
 
 function getExcludedCilIds() {
   return new Set(
