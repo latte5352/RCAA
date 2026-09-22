@@ -265,10 +265,20 @@ export function checkDocHistoryRule(record) {
   const versioningIso = parseDatetimeIso(record.versioning);
   if (lastEditIso && (!versioningIso || versioningIso < lastEditIso)) return null;
 
-  // 한 번도 승인/베이스라인까지 간 적 없는 문서(첫 승인 전 초기 버전들)는 아직 문서 이력에
-  // PR을 기술해야 할 대상이 아니다 - 처음 승인되기 전까지는 PR 없이 계속 수정될 수 있다는
-  // 확인에 따른 것. collector.js가 baseline 이력에 승인 스탬프가 있었는지로 미리 계산해둔다.
-  if (!record.hasEverBeenApproved) return null;
+  // 한 번도 승인/베이스라인까지 간 적 없는 문서(첫 승인 전 초기 버전들)는 아직 PR을 기술해야
+  // 할 대상은 아니지만("처음 승인되기 전까지는 PR 없이 계속 수정될 수 있다"), 그렇다고 아예
+  // 검사를 안 하는 건 아니다 - 버전 이력 Description에 뭐라도(내용이) 적혀있으면 OK, 아예
+  // 안 적혀있으면 NG로 본다. collector.js가 baseline 이력에 승인 스탬프가 있었는지로 미리
+  // 계산해둔다.
+  if (!record.hasEverBeenApproved) {
+    const verDescRaw = record.verDesc || "";
+    const currentVersion = record.currentVersion || "미업로드";
+    if (!verDescRaw) {
+      const reasons = [`버전 이력 Description이 작성되지 않음(버전 ${currentVersion})`];
+      return { ok: false, reasons, detailReasons: reasons };
+    }
+    return { ok: true, reasons: [], detailReasons: [] };
+  }
 
   // 이 문서에 실제로 어떤 PR이 연결돼 열려있는지(NCL Related Item 대조)까지는 안 보고, 버전
   // 이력 Description에 PR 번호가 하나라도 적혀있는지 + 그 번호가 NC List에 실제 존재하는지만
