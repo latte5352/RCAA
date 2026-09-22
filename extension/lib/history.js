@@ -27,20 +27,62 @@ async function saveSnapshot(projectName, snapshot) {
   await chrome.storage.local.set({ [historyKey(projectName)]: snapshot });
 }
 
-// 트래커명으로 직전 스냅샷 항목을 못 찾으면(트래커명이 바뀐 경우 - 오타 수정, 차종 코드
-// 추가 등) 트래커 ID(코드비머 URI에서 뽑은 고유값, 이름과 달리 이름이 바뀌어도 안 변함)로
-// 다시 찾는다 - 안 그러면 이름만 바뀌었을 뿐인데 "체크포인트 없음"으로 취급돼, 문서 이력
-// 규칙이 이미 확인 끝난 예전 버전들까지 다시 훑거나(최신 것 하나만 보는 폴백에 걸려)
-// 그사이의 실제 문제를 놓치고 지나칠 수 있다. 예전에 저장된 스냅샷엔 trackerId가 없을 수도
-// 있는데(이 필드가 생기기 전에 저장된 것), 그런 항목은 그냥 매칭 대상에서 자연히 제외된다.
+/**
+ * 스냅샷(문서 이력 체크포인트 포함)을 JSON으로 내보낸다. chrome.storage.local은 이 브라우저
+ * 안에만 있어서, 같은 프로젝트를 여러 사람이 각자 다른 컴퓨터에서 감사하면 체크포인트가
+ * 서로 안 맞을 수 있다(위 주석 참고) - 이 파일을 팀원에게 공유해서 수동으로 동기화하기
+ * 위한 용도.
+ */
+export async function exportHistorySnapshot(projectName) {
+  return { projectName, exportedAt: new Date().toISOString(), snapshot: await loadSnapshot(projectName) };
+}
+
+// 트래커 ID(코드비머 URI에서 뽑은 고유값, 이름과 달리 이름이 바뀌어도 안 변함)로 스냅샷에서
+// 항목을 찾는다. 트래커명으로 직전 스냅샷 항목을 못 찾으면(트래커명이 바뀐 경우 - 오타 수정,
+// 차종 코드 추가 등) 이걸로 다시 찾는다 - 안 그러면 이름만 바뀌었을 뿐인데 "체크포인트 없음"
+// 으로 취급돼, 문서 이력 규칙이 이미 확인 끝난 예전 버전들까지 다시 훑거나(최신 것 하나만
+// 보는 폴백에 걸려) 그사이의 실제 문제를 놓치고 지나칠 수 있다. 예전에 저장된 스냅샷엔
+// trackerId가 없을 수도 있는데(이 필드가 생기기 전에 저장된 것), 그런 항목은 그냥 매칭
+// 대상에서 자연히 제외된다.
+function findEntryByTrackerId(snapshot, trackerId) {
+  if (!trackerId) return null;
+  for (const [name, entry] of Object.entries(snapshot)) {
+    if (entry && entry.trackerId && entry.trackerId === trackerId) return name;
+  }
+  return null;
+}
+
 function findPreviousEntry(previous, r) {
   const direct = previous[r.trackerName];
   if (direct) return direct;
-  if (!r.trackerId) return null;
-  for (const entry of Object.values(previous)) {
-    if (entry.trackerId && entry.trackerId === r.trackerId) return entry;
+  const matchedName = findEntryByTrackerId(previous, r.trackerId);
+  return matchedName ? previous[matchedName] : null;
+}
+
+/**
+ * exportHistorySnapshot으로 내보낸 스냅샷을 가져와 병합한다. 가져온 파일을 "최신"으로 보고,
+ * 겹치는 트래커는 가져온 쪽 값으로 무조건 덮어쓴다 - 로컬에만 있고 가져온 파일엔 없는
+ * 트래커는 그대로 남긴다.
+ *
+ * 가져온 이름이 로컬에 그대로 있으면 그 이름 그대로 덮어쓴다. 없으면, 그사이 트래커명이
+ * 바뀌었을 수 있으니(오타 수정, 차종 코드 추가 등) 트래커 ID로 로컬에 이미 있는 항목을
+ * 찾아본다 - 찾으면 로컬 쪽의 "지금 통용되는 이름"에 덮어쓴다(그래야 이름이 바뀐 트래커가
+ * 옛날 이름으로 된 별도 항목으로 남아 로컬의 최신 이름 항목과 따로 노는 걸 막는다). 그것도
+ * 못 찾으면(트래커 ID가 없는 예전 내보내기, 또는 로컬이 아직 모르는 트래커) 가져온 이름
+ * 그대로 새로 추가한다.
+ * @returns {Promise<{mergedCount: number}>}
+ */
+export async function importHistorySnapshot(projectName, importedSnapshot) {
+  const previous = await loadSnapshot(projectName);
+  const merged = { ...previous };
+  for (const [importedName, importedEntry] of Object.entries(importedSnapshot || {})) {
+    const targetName = importedName in merged
+      ? importedName
+      : findEntryByTrackerId(merged, importedEntry && importedEntry.trackerId) || importedName;
+    merged[targetName] = importedEntry;
   }
-  return null;
+  await saveSnapshot(projectName, merged);
+  return { mergedCount: Object.keys(importedSnapshot || {}).length };
 }
 
 // docHistoryCheckedVersion: "문서 이력에 PR 기재가 빠진 게 없다고 마지막으로 확인된 버전".

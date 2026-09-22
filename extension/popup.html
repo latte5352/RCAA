@@ -37,6 +37,9 @@
   #cmRoleWarning.role-ok { background: #eaf7ec; color: #1e7e34; }
   #cmRoleWarning.role-unknown { background: #f4f4f4; color: #888; }
   #projectFilterNote { font-size: 11px; color: #888; margin: -4px 0 8px; }
+  #checkpointShareRow { display: flex; gap: 6px; margin-bottom: 4px; }
+  #checkpointShareRow button { width: auto; flex: 1; font-size: 12px; padding: 6px; }
+  #checkpointShareStatus { font-size: 11px; color: #666; margin: 0 0 8px; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -56,6 +59,12 @@
       <div id="projectDropdownList" class="hidden"></div>
     </div>
     <div id="projectFilterNote" class="hidden"></div>
+    <div id="checkpointShareRow" class="hidden">
+      <button id="exportCheckpointBtn" type="button">체크포인트 내보내기</button>
+      <button id="importCheckpointBtn" type="button">체크포인트 가져오기</button>
+    </div>
+    <input type="file" id="importCheckpointFile" accept="application/json,.json" class="hidden">
+    <div id="checkpointShareStatus" class="hidden"></div>
     <div id="trackerPicker">
       <input type="text" id="trackerSearchInput" placeholder="트래커 검색...">
       <div id="trackerBulkButtons" class="hidden">

@@ -6,6 +6,7 @@ import { createClient } from "./lib/codebeamerClient.js";
 import { verifyLogin, listProjects } from "./lib/projects.js";
 import { listRegisteredTrackerNames } from "./lib/collector.js";
 import { loadReviewState } from "./lib/reviewState.js";
+import { exportHistorySnapshot, importHistorySnapshot } from "./lib/history.js";
 import { checkUserProjectRole, filterProjectsByRole } from "./lib/memberRoles.js";
 import { BASE_URL, BASE_URL_V3, PROJ_BASE_URL, CM_ROLE_NAME, TRACKER_NAME_CIL, TRACKER_NAME_NCL } from "./lib/config.js";
 
@@ -15,6 +16,11 @@ const errorEl = document.getElementById("error");
 const stepEl = document.getElementById("step");
 const projectSearchInput = document.getElementById("projectSearchInput");
 const projectDropdownList = document.getElementById("projectDropdownList");
+const checkpointShareRow = document.getElementById("checkpointShareRow");
+const exportCheckpointBtn = document.getElementById("exportCheckpointBtn");
+const importCheckpointBtn = document.getElementById("importCheckpointBtn");
+const importCheckpointFile = document.getElementById("importCheckpointFile");
+const checkpointShareStatus = document.getElementById("checkpointShareStatus");
 const trackerSearchInput = document.getElementById("trackerSearchInput");
 const trackerListBox = document.getElementById("trackerListBox");
 const trackerBulkButtons = document.getElementById("trackerBulkButtons");
@@ -51,6 +57,9 @@ function resetRunConfirm() {
 
 async function refreshLastAuditInfo() {
   resetRunConfirm();
+  checkpointShareStatus.classList.add("hidden");
+  checkpointShareStatus.textContent = "";
+  checkpointShareRow.classList.toggle("hidden", !selectedProjectName);
   if (!selectedProjectName) {
     lastAuditInfo.classList.add("hidden");
     viewLastBtn.classList.add("hidden");
@@ -68,6 +77,55 @@ async function refreshLastAuditInfo() {
   lastAuditInfo.classList.remove("hidden");
   viewLastBtn.classList.remove("hidden");
 }
+
+function showCheckpointShareStatus(text) {
+  checkpointShareStatus.textContent = text;
+  checkpointShareStatus.classList.remove("hidden");
+}
+
+// 체크포인트(문서 이력 확인 기준)는 chrome.storage.local, 즉 이 브라우저 안에만 있어서
+// 같은 프로젝트를 여러 사람이 각자 다른 컴퓨터에서 감사하면 서로 안 맞을 수 있다 - 이
+// 내보내기/가져오기로 파일을 통해 수동으로 동기화한다(history.js 참고).
+exportCheckpointBtn.addEventListener("click", async () => {
+  if (!selectedProjectName) return;
+  const data = await exportHistorySnapshot(selectedProjectName);
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const safeProject = selectedProjectName.replace(/[\\/:*?"<>|]/g, "_");
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `SUP8_체크포인트_${safeProject}_${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showCheckpointShareStatus("내보내기 완료. 이 파일을 팀원에게 전달해주세요.");
+});
+
+importCheckpointBtn.addEventListener("click", () => {
+  importCheckpointFile.click();
+});
+
+importCheckpointFile.addEventListener("change", async () => {
+  const file = importCheckpointFile.files[0];
+  importCheckpointFile.value = ""; // 같은 파일을 다시 골라도 change가 또 뜨도록 초기화
+  if (!file || !selectedProjectName) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (!data || typeof data.snapshot !== "object" || data.snapshot === null) {
+      throw new Error("체크포인트 파일 형식이 올바르지 않습니다.");
+    }
+    const projectNote = data.projectName && data.projectName !== selectedProjectName
+      ? ` (원래 "${data.projectName}" 프로젝트 것이니 프로젝트가 맞는지 확인해주세요)`
+      : "";
+    const result = await importHistorySnapshot(selectedProjectName, data.snapshot);
+    const exportedAtNote = data.exportedAt ? `${new Date(data.exportedAt).toLocaleString("ko-KR")} 기준 ` : "";
+    showCheckpointShareStatus(`가져오기 완료 - ${exportedAtNote}${result.mergedCount}개 트래커 반영됨${projectNote}.`);
+  } catch (e) {
+    showCheckpointShareStatus(`가져오기 실패: ${e.message}`);
+  }
+});
 
 let cmRoleCheckToken = 0;
 
