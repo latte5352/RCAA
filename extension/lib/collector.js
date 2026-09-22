@@ -34,13 +34,15 @@ const PR_IN_DESC_RE = /\bPR[^\d]*?(\d+)/gi;
  * 있음, history.js 참고) 이후 새로 생긴 버전들의 설명에 PR 번호가 하나라도 적혀있는지,
  * 적혀있다면 그 번호가 NC List에 실제 존재하는지만 본다 - 어떤 PR인지, 그 시점에 그 PR이
  * 열려있었는지까지는 안 따진다(자동으로 완벽히 판정하려는 게 아니라, 사람이 직접 확인할
- * 후보를 추리는 용도). 문제가 있으면 checkpoint가 전진하지 않으므로, 고쳐질 때까지 다음
- * 감사에서도 같은 지점부터 다시 확인해 계속 안내된다.
- * checkpointVersion을 baseline 목록에서 못 찾으면(첫 확인, 트래커명 변경 등) 최신 버전
- * 하나만 본다. 단, 처음 승인된 baseline(그리고 그 이전)은 무슨 일이 있어도 검사 대상에
- * 넣지 않는다 - 최초 승인은 문제를 고쳐서 된 게 아니라 처음 공식화된 것뿐이라 PR을 적을
- * 이유가 없다(예: 1.0 (Approved)가 이 트래커의 baseline 이력 중 첫 baseline이자 첫 승인인
- * 경우, 체크포인트가 없어서 "최신 것 하나만 본다" 폴백에 걸리더라도 1.0은 보지 않는다).
+ * 후보를 추리는 용도). 새로 생긴 버전이 여러 개고 그중 문제 있는 게 여러 개면, 첫 번째에서
+ * 멈추지 않고 전부 모아서 반환한다(하나씩만 순차로 드러나면 뒤에 있는 문제를 놓치고 지나칠
+ * 수 있어서). 문제가 있으면 checkpoint가 전진하지 않으므로, 고쳐질 때까지 다음 감사에서도
+ * 같은 지점부터 다시 확인해 계속 안내된다.
+ * checkpointVersion을 baseline 목록에서 못 찾으면(첫 확인 등) 최신 버전 하나만 본다. 단,
+ * 처음 승인된 baseline(그리고 그 이전)은 무슨 일이 있어도 검사 대상에 넣지 않는다 - 최초
+ * 승인은 문제를 고쳐서 된 게 아니라 처음 공식화된 것뿐이라 PR을 적을 이유가 없다(예: 1.0
+ * (Approved)가 이 트래커의 baseline 이력 중 첫 baseline이자 첫 승인인 경우, 체크포인트가
+ * 없어서 "최신 것 하나만 본다" 폴백에 걸리더라도 1.0은 보지 않는다).
  */
 function findDocHistoryManualCheckReason(allBaselines, checkpointVersion, validPrNumbers) {
   if (!allBaselines || allBaselines.length === 0) return null;
@@ -62,6 +64,7 @@ function findDocHistoryManualCheckReason(allBaselines, checkpointVersion, validP
   }
 
   const newBaselines = allBaselines.slice(sinceIndex);
+  const reasons = [];
   for (const b of newBaselines) {
     const desc = b.description || "";
     const prNums = [];
@@ -70,14 +73,15 @@ function findDocHistoryManualCheckReason(allBaselines, checkpointVersion, validP
     while ((m = PR_IN_DESC_RE.exec(desc)) !== null) prNums.push(m[1]);
 
     if (prNums.length === 0) {
-      return `버전 ${b.version ?? "?"} 설명에 PR 번호가 적혀있지 않음`;
+      reasons.push(`버전 ${b.version ?? "?"} 설명에 PR 번호가 적혀있지 않음`);
+      continue;
     }
     const invalid = prNums.filter((n) => !validPrNumbers.has(n));
     if (invalid.length > 0) {
-      return `버전 ${b.version ?? "?"} 설명에 적힌 PR 번호(${invalid.join(", ")})가 NC List에서 확인되지 않음`;
+      reasons.push(`버전 ${b.version ?? "?"} 설명에 적힌 PR 번호(${invalid.join(", ")})가 NC List에서 확인되지 않음`);
     }
   }
-  return null;
+  return reasons.length > 0 ? reasons.join(" / ") : null;
 }
 
 // ── CIL 파싱 ────────────────────────────────────────────────────────────────
@@ -280,12 +284,19 @@ function buildReviewReportJoinMap(mergedRows) {
 //   return result;
 // }
 
+// codebeamer URI 맨 끝의 숫자 ID를 뽑는다. 트래커명과 달리 이름이 바뀌어도 안 변하는
+// 고유값이라, 트래커명 변경으로 문서 이력 체크포인트가 리셋되지 않게 하는 용도로도 쓴다
+// (history.js의 findPreviousEntry 참고).
+function trackerIdFromUri(uri) {
+  return (uri || "").replace(/\/$/, "").split("/").pop();
+}
+
 // ── 이벤트성 워크플로우 판별 (캐시) ──────────────────────────────────────────
 function makeEventBasedChecker(client) {
   const cache = new Map();
   return async function isEventbasedWorkflow(trackerUri) {
     if (cache.has(trackerUri)) return cache.get(trackerUri);
-    const trackerId = trackerUri.replace(/\/$/, "").split("/").pop();
+    const trackerId = trackerIdFromUri(trackerUri);
     let result = false;
     try {
       const schema = await client.getJson(`${client.baseUrl}/tracker/${trackerId}/schema`);
@@ -314,6 +325,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
     return {
       cilId: mergedRow.cilId,
       trackerName: mergedRow.trackerName,
+      trackerId: "", // 연결된 트래커가 없어 URI 자체가 없음 - ID 기반 체크포인트 복구 대상 아님
       trackerType: "",
       itemCount: 0,
       fileName: "",
@@ -345,6 +357,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
   // 똑같이 대괄호 태그를 떼고 찾아야 한다 - 안 그러면 실제로 연결된 Review Report가 있어도
   // 조용히 못 찾는다.
   const rrUri = ctx.reviewReportUriMap.get(stripBracketTag(mergedRow.trackerName)) || null;
+  const trackerId = trackerIdFromUri(uri);
 
   const tracker = await client.getJson(`https://codebeamer.slworld.com/cb/rest${uri}`);
   const trackerItemResult = await client.fetchAllItems(`https://codebeamer.slworld.com/cb/rest${uri}/items`);
@@ -444,6 +457,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
   return {
     cilId: mergedRow.cilId,
     trackerName: tName,
+    trackerId,
     trackerType: tType,
     itemCount: items.length,
     fileName: tType === "Document" && items.length > 0 ? items[0].fileName || "" : "",
@@ -469,7 +483,9 @@ async function processTrackerRow(client, mergedRow, ctx) {
     itemFetchIncomplete,
     docHistoryManualCheckReason: findDocHistoryManualCheckReason(
       ctx.allBaselinesByTracker.get(tName),
-      ctx.docHistoryCheckpoints[tName],
+      // 이름으로 먼저 찾고, 없으면(트래커명이 바뀐 경우) ID로 찾은 체크포인트로 대체한다 -
+      // 이름 변경만으로 "지금까지 확인한 지점"을 잃어버려 처음부터 다시 확인하지 않도록.
+      ctx.docHistoryCheckpoints[tName] ?? ctx.docHistoryCheckpointsById[trackerId],
       ctx.validPrNumbers
     ),
     // 문서 이력 기술 규칙(PR 기재 확인)은 이 트래커가 한 번이라도 승인/베이스라인까지 간
@@ -533,7 +549,7 @@ export async function listRegisteredTrackerNames(client, { projectName, trackerC
  *   시작/완료할 때마다 불러준다.
  * @returns {{records: Array, unregisteredTrackers: Array<{trackerName, trackerUri}>, projectId: string}}
  */
-export async function collectAuditData(client, { projectName, trackerCil, trackerNcl, onlyTrackerNames = null, onProgress = null, docHistoryCheckpoints = {} }) {
+export async function collectAuditData(client, { projectName, trackerCil, trackerNcl, onlyTrackerNames = null, onProgress = null, docHistoryCheckpoints = {}, docHistoryCheckpointsById = {} }) {
   const { userUri, allTrackers, registered, unregistered } = await loadMergedTrackerRows(client, { projectName, trackerCil, onProgress });
   const reviewReportUriMap = buildReviewReportJoinMap(registered);
 
@@ -571,7 +587,7 @@ export async function collectAuditData(client, { projectName, trackerCil, tracke
 
   onProgress?.({ phase: `감사 대상 트래커 ${targetRows.length}개 조회 시작...` });
   const isEventbasedWorkflow = makeEventBasedChecker(client);
-  const ctx = { reviewReportUriMap, latestBaselines, allBaselinesByTracker, docHistoryCheckpoints, validPrNumbers, isEventbasedWorkflow };
+  const ctx = { reviewReportUriMap, latestBaselines, allBaselinesByTracker, docHistoryCheckpoints, docHistoryCheckpointsById, validPrNumbers, isEventbasedWorkflow };
 
   let completed = 0;
   const results = await mapWithConcurrency(targetRows, 15, async (row) => {

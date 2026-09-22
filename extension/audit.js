@@ -492,11 +492,16 @@ async function runNewAudit(client, username) {
   // 스냅샷을 덮어써버리므로, 그 전에 먼저 읽기 전용으로 조회해둔다.
   const previousSnapshot = await loadHistorySnapshot(projectName);
   const docHistoryCheckpoints = {};
+  // 트래커명이 바뀌어도 체크포인트를 잃지 않도록, ID 기준으로도 같은 값을 찾을 수 있게
+  // 별도 맵을 만들어둔다(트래커명으로 못 찾을 때만 collector.js에서 이걸로 대체 조회).
+  const docHistoryCheckpointsById = {};
   for (const [name, entry] of Object.entries(previousSnapshot)) {
     docHistoryCheckpoints[name] = entry.docHistoryCheckedVersion;
+    if (entry.trackerId) docHistoryCheckpointsById[entry.trackerId] = entry.docHistoryCheckedVersion;
   }
   const { records, unregisteredTrackers, projectId } = await collectAuditData(client, {
-    projectName, trackerCil, trackerNcl, onlyTrackerNames, onProgress: handleCollectionProgress, docHistoryCheckpoints,
+    projectName, trackerCil, trackerNcl, onlyTrackerNames, onProgress: handleCollectionProgress,
+    docHistoryCheckpoints, docHistoryCheckpointsById,
   });
   currentProjectId = projectId;
   await applyCmRoleGate(client, projectId, username);

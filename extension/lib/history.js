@@ -27,6 +27,22 @@ async function saveSnapshot(projectName, snapshot) {
   await chrome.storage.local.set({ [historyKey(projectName)]: snapshot });
 }
 
+// 트래커명으로 직전 스냅샷 항목을 못 찾으면(트래커명이 바뀐 경우 - 오타 수정, 차종 코드
+// 추가 등) 트래커 ID(코드비머 URI에서 뽑은 고유값, 이름과 달리 이름이 바뀌어도 안 변함)로
+// 다시 찾는다 - 안 그러면 이름만 바뀌었을 뿐인데 "체크포인트 없음"으로 취급돼, 문서 이력
+// 규칙이 이미 확인 끝난 예전 버전들까지 다시 훑거나(최신 것 하나만 보는 폴백에 걸려)
+// 그사이의 실제 문제를 놓치고 지나칠 수 있다. 예전에 저장된 스냅샷엔 trackerId가 없을 수도
+// 있는데(이 필드가 생기기 전에 저장된 것), 그런 항목은 그냥 매칭 대상에서 자연히 제외된다.
+function findPreviousEntry(previous, r) {
+  const direct = previous[r.trackerName];
+  if (direct) return direct;
+  if (!r.trackerId) return null;
+  for (const entry of Object.values(previous)) {
+    if (entry.trackerId && entry.trackerId === r.trackerId) return entry;
+  }
+  return null;
+}
+
 // docHistoryCheckedVersion: "문서 이력에 PR 기재가 빠진 게 없다고 마지막으로 확인된 버전".
 // 이번에 문제가 없었으면(record.docHistoryManualCheckReason이 없으면) 지금 버전까지 전진시키고,
 // 문제가 있었으면 그대로 둬서 - 고쳐지기 전까지는 다음 감사에서도 같은 지점부터 다시 확인해
@@ -35,11 +51,16 @@ function extractCurrentSnapshot(records, previous) {
   const snapshot = {};
   for (const r of records) {
     if (!r.trackerName) continue;
-    const prevEntry = previous[r.trackerName] || {};
+    const prevEntry = findPreviousEntry(previous, r) || {};
     const docHistoryCheckedVersion = r.docHistoryManualCheckReason
       ? prevEntry.docHistoryCheckedVersion ?? null
       : r.currentVersion || null;
-    snapshot[r.trackerName] = { status: r.status || null, version: r.currentVersion || null, docHistoryCheckedVersion };
+    snapshot[r.trackerName] = {
+      status: r.status || null,
+      version: r.currentVersion || null,
+      docHistoryCheckedVersion,
+      trackerId: r.trackerId || null,
+    };
   }
   return snapshot;
 }
