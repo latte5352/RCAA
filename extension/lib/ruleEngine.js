@@ -440,13 +440,15 @@ export function runAudit(records, options = {}) {
     }
 
     // 버전 규칙 (버전 규칙 + 이벤트성 Create Date + 주기적 Create Date 통합)
+    // 주기적 활동 산출물(Schedule Plan(실행본), Project Weekly Meeting Record 등) 검사는
+    // 당분간 안 하기로 해서 checkPeriodicCreateDate 호출을 주석 처리 - 필요해지면 복구.
     let verChecked = false;
     const verNgReasons = [];
     const verDetailReasons = [];
     for (const result of [
       checkVersionRule(record),
       checkEventbasedCreateDate(record),
-      checkPeriodicCreateDate(record, cadence, anchor, periodicTrackers),
+      // checkPeriodicCreateDate(record, cadence, anchor, periodicTrackers),
     ]) {
       if (result === null) continue;
       verChecked = true;

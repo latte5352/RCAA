@@ -66,6 +66,9 @@
     </div>
     <div id="trackerSelectionSummary" class="hidden"></div>
     <div id="cmRoleWarning" class="hidden"></div>
+    <!-- 주기적 활동 산출물(Schedule Plan(실행본) 등) 검사를 당분간 안 하기로 해서, 그
+         주기(매주/2주/한달 + 요일/일자)를 고르는 UI도 같이 주석 처리 - 필요해지면 복구
+         (popup.js의 관련 코드도 같이 복구해야 함).
     <select id="cadenceSelect">
       <option value="weekly">매주</option>
       <option value="biweekly" selected>2주</option>
@@ -81,6 +84,7 @@
       <option value="6">일요일</option>
     </select>
     <select id="dayOfMonthSelect" class="hidden"></select>
+    -->
     <div id="lastAuditInfo" class="hidden"></div>
     <button id="viewLastBtn" class="hidden" type="button">직전 감사 결과 보기</button>
     <button id="runBtn">새 감사 시작</button>

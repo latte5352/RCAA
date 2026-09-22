@@ -21,9 +21,11 @@ const trackerBulkButtons = document.getElementById("trackerBulkButtons");
 const trackerSelectAllBtn = document.getElementById("trackerSelectAllBtn");
 const trackerSelectNoneBtn = document.getElementById("trackerSelectNoneBtn");
 const trackerSelectionSummary = document.getElementById("trackerSelectionSummary");
-const cadenceSelect = document.getElementById("cadenceSelect");
-const weekdaySelect = document.getElementById("weekdaySelect");
-const dayOfMonthSelect = document.getElementById("dayOfMonthSelect");
+// 주기적 활동 산출물 검사를 당분간 안 하기로 해서, 이 주기 선택 UI 참조도 같이 주석 처리
+// (popup.html의 관련 <select> 자체도 주석 처리돼 있음 - 필요해지면 같이 복구).
+// const cadenceSelect = document.getElementById("cadenceSelect");
+// const weekdaySelect = document.getElementById("weekdaySelect");
+// const dayOfMonthSelect = document.getElementById("dayOfMonthSelect");
 const lastAuditInfo = document.getElementById("lastAuditInfo");
 const viewLastBtn = document.getElementById("viewLastBtn");
 const runBtn = document.getElementById("runBtn");
@@ -399,37 +401,39 @@ trackerSearchInput.addEventListener("input", () => {
   renderTrackerOptions(trackerSearchInput.value);
 });
 
-for (let day = 1; day <= 31; day++) {
-  const option = document.createElement("option");
-  option.value = day;
-  option.textContent = `${day}일`;
-  dayOfMonthSelect.appendChild(option);
-}
-
-function updatePeriodicInputsVisibility() {
-  const isMonthly = cadenceSelect.value === "monthly";
-  weekdaySelect.classList.toggle("hidden", isMonthly);
-  dayOfMonthSelect.classList.toggle("hidden", !isMonthly);
-}
-
-async function loadPeriodicSettings() {
-  const stored = await chrome.storage.session.get(["periodic_cadence", "periodic_weekday", "periodic_day_of_month"]);
-  if (stored.periodic_cadence) cadenceSelect.value = stored.periodic_cadence;
-  if (stored.periodic_weekday) weekdaySelect.value = stored.periodic_weekday;
-  if (stored.periodic_day_of_month) dayOfMonthSelect.value = stored.periodic_day_of_month;
-  updatePeriodicInputsVisibility();
-}
-
-cadenceSelect.addEventListener("change", () => {
-  chrome.storage.session.set({ periodic_cadence: cadenceSelect.value });
-  updatePeriodicInputsVisibility();
-});
-weekdaySelect.addEventListener("change", () => {
-  chrome.storage.session.set({ periodic_weekday: weekdaySelect.value });
-});
-dayOfMonthSelect.addEventListener("change", () => {
-  chrome.storage.session.set({ periodic_day_of_month: dayOfMonthSelect.value });
-});
+// 주기적 활동 산출물 검사를 당분간 안 하기로 해서, 주기 설정 UI 관련 로직 전체 주석 처리
+// (필요해지면 위 const 선언 3개와 함께 복구).
+// for (let day = 1; day <= 31; day++) {
+//   const option = document.createElement("option");
+//   option.value = day;
+//   option.textContent = `${day}일`;
+//   dayOfMonthSelect.appendChild(option);
+// }
+//
+// function updatePeriodicInputsVisibility() {
+//   const isMonthly = cadenceSelect.value === "monthly";
+//   weekdaySelect.classList.toggle("hidden", isMonthly);
+//   dayOfMonthSelect.classList.toggle("hidden", !isMonthly);
+// }
+//
+// async function loadPeriodicSettings() {
+//   const stored = await chrome.storage.session.get(["periodic_cadence", "periodic_weekday", "periodic_day_of_month"]);
+//   if (stored.periodic_cadence) cadenceSelect.value = stored.periodic_cadence;
+//   if (stored.periodic_weekday) weekdaySelect.value = stored.periodic_weekday;
+//   if (stored.periodic_day_of_month) dayOfMonthSelect.value = stored.periodic_day_of_month;
+//   updatePeriodicInputsVisibility();
+// }
+//
+// cadenceSelect.addEventListener("change", () => {
+//   chrome.storage.session.set({ periodic_cadence: cadenceSelect.value });
+//   updatePeriodicInputsVisibility();
+// });
+// weekdaySelect.addEventListener("change", () => {
+//   chrome.storage.session.set({ periodic_weekday: weekdaySelect.value });
+// });
+// dayOfMonthSelect.addEventListener("change", () => {
+//   chrome.storage.session.set({ periodic_day_of_month: dayOfMonthSelect.value });
+// });
 
 async function refreshView() {
   const credentials = await getCredentials();
@@ -438,7 +442,7 @@ async function refreshView() {
     runView.classList.remove("hidden");
     const client = createClient({ baseUrl: BASE_URL, baseUrlV3: BASE_URL_V3, ...credentials });
     await loadProjects(client, credentials.username);
-    await loadPeriodicSettings();
+    // await loadPeriodicSettings(); // 주기 설정 UI 자체를 주석 처리해서 같이 비활성화
   } else {
     loginView.classList.remove("hidden");
     runView.classList.add("hidden");
@@ -535,13 +539,10 @@ runBtn.addEventListener("click", async () => {
   }
   resetRunConfirm();
 
-  const periodicCadence = cadenceSelect.value;
-  const periodicAnchor = periodicCadence === "monthly" ? Number(dayOfMonthSelect.value) : Number(weekdaySelect.value);
-
+  // 주기적 활동 산출물 검사를 당분간 안 하기로 해서 cadence/anchor는 안 보낸다 - audit.js가
+  // URL에 없으면 DEFAULT_PERIODIC_CADENCE/ANCHOR로 자동 대체한다(어차피 이제 안 쓰이지만).
   const params = new URLSearchParams({
     project: selectedProjectName,
-    cadence: periodicCadence,
-    anchor: String(periodicAnchor),
     trackerCil: TRACKER_NAME_CIL,
     trackerNcl: TRACKER_NAME_NCL,
   });
