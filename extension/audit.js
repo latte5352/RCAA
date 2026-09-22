@@ -46,6 +46,7 @@ const docHistoryManualCheckList = document.getElementById("docHistoryManualCheck
 const incompleteFetchWrap = document.getElementById("incompleteFetchWrap");
 const incompleteFetchList = document.getElementById("incompleteFetchList");
 const toolbarRow = document.getElementById("toolbarRow");
+const legend = document.getElementById("legend");
 const searchInput = document.getElementById("searchInput");
 const ngOnlyToggle = document.getElementById("ngOnlyToggle");
 const selectAllBtn = document.getElementById("selectAllBtn");
@@ -198,6 +199,7 @@ function renderItemsTable(records, excludedCilIds = new Set()) {
 
   itemsTable.classList.remove("hidden");
   toolbarRow.classList.remove("hidden");
+  legend.classList.remove("hidden");
   updateMatchCount();
 }
 
