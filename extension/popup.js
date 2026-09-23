@@ -48,6 +48,11 @@ let allTrackerNames = [];
 let trackerNamesLoadedForProject = null;
 let selectedTrackerNames = new Set();
 let hasStoredTrackerSelection = false; // 이 프로젝트에 대해 세션 중 명시적으로 선택을 저장한 적 있는지
+// 지금 선택된 프로젝트의 트래커 목록을 다 불러왔는지. 이게 false인 동안(=allTrackerNames가
+// 아직 비어있는 로딩 중) "새 감사 시작"을 누르면, runBtn 클릭 핸들러의 isPartialSelection
+// 판단이 allTrackerNames.length>0에 기대고 있어서 "선택 트래커만"이 아니라 "전체 감사"로
+// 조용히 돌아버린다(트래커 선택을 해뒀어도 무시됨) - 그래서 이 플래그로 로딩 중엔 아예 막는다.
+let trackerNamesReady = false;
 
 function resetRunConfirm() {
   runConfirmArmed = false;
@@ -318,6 +323,8 @@ projectSearchInput.addEventListener("keydown", (e) => {
 function resetTrackerPicker() {
   allTrackerNames = [];
   trackerNamesLoadedForProject = null;
+  trackerNamesReady = false;
+  runBtn.disabled = true;
   trackerSearchInput.value = "";
   trackerSearchInput.readOnly = false;
   trackerSearchInput.placeholder = "트래커 검색...";
@@ -419,39 +426,46 @@ function renderTrackerOptions(filterText) {
 }
 
 async function loadTrackerNamesForCurrentProject() {
-  const credentials = await getCredentials();
-  if (!credentials || !selectedProjectName) return;
-
-  trackerSearchInput.readOnly = true;
-  trackerSearchInput.placeholder = "불러오는 중...";
-  trackerListBox.innerHTML = '<div class="project-option-empty">불러오는 중...</div>';
-  trackerListBox.classList.remove("hidden");
+  // 이 함수가 끝나기 전까지(성공/실패 어느 쪽이든) "새 감사 시작"을 막아둔다 - resetTrackerPicker가
+  // 이미 호출 시점에 꺼뒀지만, 여기서도 끝까지 보장한다(위 trackerNamesReady 선언부 설명 참고).
   try {
-    const client = createClient({ baseUrl: BASE_URL, baseUrlV3: BASE_URL_V3, ...credentials });
-    allTrackerNames = await listRegisteredTrackerNames(client, { projectName: selectedProjectName, trackerCil: TRACKER_NAME_CIL });
-    trackerNamesLoadedForProject = selectedProjectName;
-    trackerSearchInput.placeholder = "트래커 검색...";
+    const credentials = await getCredentials();
+    if (!credentials || !selectedProjectName) return;
 
-    if (!hasStoredTrackerSelection) {
-      // 이 프로젝트에서 한 번도 선택한 적 없으면 디폴트는 전체 체크
-      selectedTrackerNames = new Set(allTrackerNames.map((t) => t.name));
-      hasStoredTrackerSelection = true;
-      await persistSelectedTrackers();
-    } else {
-      // 저장된 선택 중 지금은 더 이상 존재하지 않는 트래커 이름은 걸러낸다
-      const validNames = new Set(allTrackerNames.map((t) => t.name));
-      selectedTrackerNames = new Set(Array.from(selectedTrackerNames).filter((n) => validNames.has(n)));
+    trackerSearchInput.readOnly = true;
+    trackerSearchInput.placeholder = "불러오는 중...";
+    trackerListBox.innerHTML = '<div class="project-option-empty">불러오는 중...</div>';
+    trackerListBox.classList.remove("hidden");
+    try {
+      const client = createClient({ baseUrl: BASE_URL, baseUrlV3: BASE_URL_V3, ...credentials });
+      allTrackerNames = await listRegisteredTrackerNames(client, { projectName: selectedProjectName, trackerCil: TRACKER_NAME_CIL });
+      trackerNamesLoadedForProject = selectedProjectName;
+      trackerSearchInput.placeholder = "트래커 검색...";
+
+      if (!hasStoredTrackerSelection) {
+        // 이 프로젝트에서 한 번도 선택한 적 없으면 디폴트는 전체 체크
+        selectedTrackerNames = new Set(allTrackerNames.map((t) => t.name));
+        hasStoredTrackerSelection = true;
+        await persistSelectedTrackers();
+      } else {
+        // 저장된 선택 중 지금은 더 이상 존재하지 않는 트래커 이름은 걸러낸다
+        const validNames = new Set(allTrackerNames.map((t) => t.name));
+        selectedTrackerNames = new Set(Array.from(selectedTrackerNames).filter((n) => validNames.has(n)));
+      }
+      trackerBulkButtons.classList.toggle("hidden", allTrackerNames.length === 0);
+      updateTrackerSummary();
+      renderTrackerOptions(trackerSearchInput.value);
+    } catch (e) {
+      allTrackerNames = [];
+      trackerSearchInput.placeholder = "트래커 목록을 불러오지 못했습니다";
+      trackerListBox.innerHTML = "";
+      trackerListBox.classList.add("hidden");
+    } finally {
+      trackerSearchInput.readOnly = false;
     }
-    trackerBulkButtons.classList.toggle("hidden", allTrackerNames.length === 0);
-    updateTrackerSummary();
-    renderTrackerOptions(trackerSearchInput.value);
-  } catch (e) {
-    allTrackerNames = [];
-    trackerSearchInput.placeholder = "트래커 목록을 불러오지 못했습니다";
-    trackerListBox.innerHTML = "";
-    trackerListBox.classList.add("hidden");
   } finally {
-    trackerSearchInput.readOnly = false;
+    trackerNamesReady = true;
+    runBtn.disabled = false;
   }
 }
 
@@ -580,6 +594,12 @@ runBtn.addEventListener("click", async () => {
   }
   if (!selectedProjectName) {
     stepEl.textContent = "목록에서 프로젝트를 선택하세요.";
+    return;
+  }
+  if (!trackerNamesReady) {
+    // allTrackerNames가 아직 비어있는 "로딩 중"과 "이 프로젝트는 트래커가 0개"를 구분 못 하면
+    // 아래 isPartialSelection 판단이 깨져서 선택 범위를 무시하고 전체 감사로 돌아버린다.
+    stepEl.textContent = "트래커 목록을 아직 불러오는 중입니다. 잠시 후 다시 시도해주세요.";
     return;
   }
   if (allTrackerNames.length > 0 && selectedTrackerNames.size === 0) {
