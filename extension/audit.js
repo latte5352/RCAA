@@ -160,10 +160,14 @@ function badge(label, ruleValue, ruleKey, isManualPending) {
   return span;
 }
 
+const RULE_LABELS = { saveRule: "저장", versionRule: "버전", docHistoryRule: "이력", statusRule: "상태" };
+const ALL_RULE_KEYS = ["saveRule", "versionRule", "docHistoryRule", "statusRule"];
+
 // "직접확인 필요"로 뜨는 두 가지(🙋 상태 규칙 자동 판정 불가, 📝 문서 이력 PR 기재 확인 필요)만
-// 여기서 사람이 OK/NG/N-A를 직접 고르고 코멘트를 쓰게 강제한다. 이벤트성/Test Result류/승인
+// 여기서 사람이 OK/NG/N-A를 직접 고르고 코멘트를 쓰게 강제한다(필수). 이벤트성/Test Result류/승인
 // 완료로 버전 규칙이 아예 스킵되는 경우처럼 "원래 그 규칙 대상이 아닌" N/A는 대상이 아니다 -
-// 그런 건 도구가 이미 정확히 판단한 거라 사람이 매번 다시 확인할 이유가 없다.
+// 그런 건 도구가 이미 정확히 판단한 거라 사람이 매번 다시 확인할 이유가 없다. 이 목록에 없는
+// 나머지 규칙들은 강제는 아니지만, createManualRow에서 "선택 사항"으로 똑같이 고칠 수 있게 한다.
 function getManualCheckFlags(record) {
   const flags = [];
   if ((warningsData.manualStatusCheckTrackers || []).includes(record.trackerName)) {
@@ -178,10 +182,58 @@ function getManualCheckFlags(record) {
   return flags;
 }
 
-function createManualRow(record, manualFlags) {
+// isRequired=true: "선택해주세요"부터 시작(안 고르면 반영 차단). isRequired=false: 기본값이
+// "자동 판정 유지"라 안 건드리면 자동 계산값 그대로 나간다(applyManualInputsToRecords 참고) -
+// 사람이 자동 판정에 동의하지 않을 때만 바꾸면 되는 순수 선택 사항.
+function createManualFieldRow(rule, label, reason, isRequired, autoValue) {
+  const fieldRow = document.createElement("div");
+  fieldRow.className = "manual-field-row";
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "manual-field-label";
+  labelEl.textContent = `${label} 규칙:`;
+  fieldRow.appendChild(labelEl);
+
+  const select = document.createElement("select");
+  select.className = "manual-verdict-select";
+  select.dataset.rule = rule;
+  select.dataset.required = String(isRequired);
+  if (isRequired) {
+    select.innerHTML = `
+      <option value="">선택해주세요</option>
+      <option value="1">OK</option>
+      <option value="2">NG</option>
+      <option value="0">N/A (해당 없음)</option>
+    `;
+  } else {
+    // 배지를 "자동 판정 유지"로 되돌렸을 때 원래 색으로 복원하기 위해 원래 계산값을 같이 들고 있는다.
+    select.dataset.autoKind = autoValue === 2 ? "ng" : autoValue === 1 ? "ok" : "na";
+    select.innerHTML = `
+      <option value="auto">자동 판정 유지</option>
+      <option value="1">OK</option>
+      <option value="2">NG</option>
+      <option value="0">N/A (해당 없음)</option>
+    `;
+  }
+  fieldRow.appendChild(select);
+
+  if (reason) {
+    const reasonSpan = document.createElement("span");
+    reasonSpan.className = "manual-field-reason";
+    reasonSpan.textContent = `(참고: ${reason})`;
+    fieldRow.appendChild(reasonSpan);
+  }
+
+  return fieldRow;
+}
+
+// requiredFlags(강제) 뒤에 나머지 규칙들을 "선택 사항"으로 이어 붙인다 - 강제 항목이 하나도
+// 없는 트래커도 사람이 원하면 아무 규칙이나 골라 고칠 수 있게 하기 위함(기본은 접힘 상태).
+function createManualRow(record, requiredFlags) {
   const tr = document.createElement("tr");
   tr.className = "manual-row";
   tr.dataset.cilId = record.cilId;
+  if (requiredFlags.length === 0) tr.classList.add("collapsed");
 
   tr.appendChild(document.createElement("td")); // 체크박스 칸 자리 맞추기용 빈 칸
 
@@ -191,42 +243,23 @@ function createManualRow(record, manualFlags) {
 
   const title = document.createElement("div");
   title.className = "manual-title";
-  title.textContent = "🙋 직접 확인 필요 - 아래 판정을 입력해야 반영할 수 있습니다";
+  title.textContent = requiredFlags.length > 0
+    ? "🙋 직접 확인 필요 - 아래 판정을 입력해야 반영할 수 있습니다"
+    : "✏ 직접 판정 수정 (선택 사항 - 자동 판정에 동의하지 않으면 바꿔서 반영할 수 있습니다)";
   content.appendChild(title);
 
-  for (const flag of manualFlags) {
-    const fieldRow = document.createElement("div");
-    fieldRow.className = "manual-field-row";
-
-    const label = document.createElement("span");
-    label.className = "manual-field-label";
-    label.textContent = `${flag.label} 규칙:`;
-    fieldRow.appendChild(label);
-
-    const select = document.createElement("select");
-    select.className = "manual-verdict-select";
-    select.dataset.rule = flag.rule;
-    select.innerHTML = `
-      <option value="">선택해주세요</option>
-      <option value="1">OK</option>
-      <option value="2">NG</option>
-      <option value="0">N/A (해당 없음)</option>
-    `;
-    fieldRow.appendChild(select);
-
-    if (flag.reason) {
-      const reasonSpan = document.createElement("span");
-      reasonSpan.className = "manual-field-reason";
-      reasonSpan.textContent = `(참고: ${flag.reason})`;
-      fieldRow.appendChild(reasonSpan);
-    }
-
-    content.appendChild(fieldRow);
+  const requiredRuleKeys = new Set(requiredFlags.map((f) => f.rule));
+  for (const flag of requiredFlags) {
+    content.appendChild(createManualFieldRow(flag.rule, flag.label, flag.reason, true, null));
+  }
+  for (const rule of ALL_RULE_KEYS) {
+    if (requiredRuleKeys.has(rule)) continue;
+    content.appendChild(createManualFieldRow(rule, RULE_LABELS[rule], null, false, record[rule]));
   }
 
   const commentLabel = document.createElement("div");
   commentLabel.className = "manual-comment-label";
-  commentLabel.textContent = "직접 확인 코멘트 (위에서 NG를 하나라도 고르면 필수 - 기존 자동 코멘트에 이어붙습니다):";
+  commentLabel.textContent = "직접 확인 코멘트 (위에서 NG로 판정하면 필수 - 기존 자동 코멘트에 이어붙습니다):";
   content.appendChild(commentLabel);
 
   const textarea = document.createElement("textarea");
@@ -304,8 +337,20 @@ function renderItemsTable(records, excludedCilIds = new Set()) {
 
     itemsBody.appendChild(row);
 
-    if (manualFlags.length > 0) {
-      itemsBody.appendChild(createManualRow(record, manualFlags));
+    // 강제(🙋/📝) 대상이 없어도 모든 트래커에 "선택 사항" 직접 판정 수정 창을 만들어둔다 -
+    // 기본은 접혀있고, 사람이 원할 때만 아래 토글 버튼으로 펼쳐서 자동 판정을 바꿀 수 있다.
+    const manualRow = createManualRow(record, manualFlags);
+    itemsBody.appendChild(manualRow);
+    if (manualFlags.length === 0) {
+      const toggleBtn = document.createElement("button");
+      toggleBtn.type = "button";
+      toggleBtn.className = "manual-toggle-btn";
+      toggleBtn.textContent = "✏ 직접 판정 수정";
+      toggleBtn.addEventListener("click", () => {
+        manualRow.classList.remove("collapsed");
+        toggleBtn.remove();
+      });
+      badgesCell.appendChild(toggleBtn);
     }
     updateRowAccent(row);
   }
@@ -451,9 +496,12 @@ itemsBody.addEventListener("change", (e) => {
     const mainRow = manualRow.previousElementSibling;
     const rule = e.target.dataset.rule;
     const badgeEl = mainRow.querySelector(`.badge[data-rule="${rule}"]`);
-    // ""(아직 선택 안 함)은 여전히 "직접확인 필요" amber로 남겨두고, "0"(사람이 N/A로 명시적
-    // 판정)만 na 회색으로 바꾼다 - 안 그러면 "아직 안 고름"과 "직접 N/A로 판정함"이 똑같아 보인다.
-    const kind = e.target.value === "2" ? "ng" : e.target.value === "1" ? "ok" : e.target.value === "0" ? "na" : "manual";
+    // ""(필수인데 아직 선택 안 함)은 여전히 "직접확인 필요" amber로 남겨두고, "0"(사람이 N/A로
+    // 명시적 판정)만 na 회색으로 바꾼다 - 안 그러면 "아직 안 고름"과 "직접 N/A로 판정함"이
+    // 똑같아 보인다. "auto"(선택 사항 - 자동 판정 유지)는 원래 배지 색으로 되돌린다.
+    const value = e.target.value;
+    const kind = value === "2" ? "ng" : value === "1" ? "ok" : value === "0" ? "na"
+      : value === "auto" ? (e.target.dataset.autoKind || "na") : "manual";
     if (badgeEl) badgeEl.className = `badge ${kind}`;
     manualRow.classList.remove("problem");
     updateRowAccent(mainRow);
@@ -561,13 +609,15 @@ function setControlsEnabled(enabled) {
   itemsBody.querySelectorAll('input[type="checkbox"]').forEach((cb) => (cb.disabled = !enabled));
 }
 
-// "직접확인 필요" 입력창(.manual-row) 하나당 그 위 트래커 행, 고른 판정들, 코멘트를 모아 반환한다.
+// "직접확인 필요"/"직접 판정 수정" 입력창(.manual-row) 하나당 그 위 트래커 행, 고른 판정들
+// (규칙별로 값+필수 여부), 코멘트를 모아 반환한다.
 function collectManualRowInputs() {
   return Array.from(itemsBody.querySelectorAll("tr.manual-row")).map((manualRow) => {
     const mainRow = manualRow.previousElementSibling;
     const verdicts = {};
     manualRow.querySelectorAll(".manual-verdict-select").forEach((select) => {
-      verdicts[select.dataset.rule] = select.value; // "" | "0"(N/A) | "1"(OK) | "2"(NG)
+      // value: 필수 항목은 ""(안 고름)|"0"(N/A)|"1"(OK)|"2"(NG), 선택 사항은 "auto"(안 건드림)도 추가.
+      verdicts[select.dataset.rule] = { value: select.value, required: select.dataset.required === "true" };
     });
     const comment = manualRow.querySelector(".manual-comment-input").value.trim();
     return { cilId: Number(manualRow.dataset.cilId), mainRow, manualRow, verdicts, comment };
@@ -575,7 +625,8 @@ function collectManualRowInputs() {
 }
 
 // 반영 대상(체크된 것)에 한해서만 검증한다 - 체크 해제해서 이번엔 안 올릴 항목까지 억지로
-// 채우게 하면 안 되므로. 문제가 있으면 그 입력창에 problem 표시를 남기고, 문제 목록을 반환한다.
+// 채우게 하면 안 되므로. 선택 사항(필수 아님)은 안 건드리고 "auto"로 남겨둬도 문제 없다 -
+// 필수 항목이 남아있거나, NG로 판정(필수든 선택이든)했는데 코멘트가 없을 때만 막는다.
 function validateManualInputs(excludedCilIds) {
   const problems = [];
   for (const entry of collectManualRowInputs()) {
@@ -583,12 +634,12 @@ function validateManualInputs(excludedCilIds) {
     if (excludedCilIds.has(entry.cilId)) continue;
 
     const trackerName = entry.mainRow.querySelector(".col-name").textContent;
-    const values = Object.values(entry.verdicts);
-    if (values.some((v) => v === "")) {
+    const infos = Object.values(entry.verdicts);
+    if (infos.some((v) => v.required && v.value === "")) {
       problems.push({ trackerName, reason: "직접확인 판정을 다 선택해주세요", row: entry.manualRow });
       continue;
     }
-    if (values.includes("2") && !entry.comment) {
+    if (infos.some((v) => v.value === "2") && !entry.comment) {
       problems.push({ trackerName, reason: "NG로 판정한 항목이 있어 코멘트를 적어야 합니다", row: entry.manualRow });
     }
   }
@@ -620,8 +671,9 @@ function applyManualInputsToRecords(excludedCilIds) {
     const record = auditRecords.find((r) => r.cilId === entry.cilId);
     if (!record) continue;
 
-    for (const [rule, value] of Object.entries(entry.verdicts)) {
-      record[rule] = value === "1" ? 1 : value === "2" ? 2 : null; // "0"(N/A)과 ""는 둘 다 null
+    for (const [rule, info] of Object.entries(entry.verdicts)) {
+      if (info.value === "auto") continue; // 선택 사항인데 안 건드림 - 자동 판정값 그대로 둠
+      record[rule] = info.value === "1" ? 1 : info.value === "2" ? 2 : null; // "0"(N/A)과 ""는 둘 다 null
     }
     if (entry.comment) {
       const addition = `[직접확인] ${entry.comment}`;
