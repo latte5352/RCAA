@@ -83,6 +83,38 @@ function isDateBasedTracker(trackerNameRaw) {
   return DATE_BASED_TRACKER_SUFFIXES.some((suffix) => nameEndsWith(pureName, suffix));
 }
 
+// 표의 %% 인라인 스팬 대신, 셀 자체에 스타일을 입히는 문법("|(색상 등 스타일...)내용" 한
+// 줄이 셀 하나, "|<"는 왼쪽 셀이 옆으로 병합된(colspan) 빈 칸)만 쓰는 표도 실제로 있다(예:
+// "|(color:black;...)v1.6" - %% 스팬 없이 셀 스타일 파라미터로만 색을 줌). 빈 줄로 행(row)이
+// 구분되므로, 빈 줄 단위로 나눈 뒤 각 줄을 셀로 파싱해서 "이름 칼럼들 + 마지막 버전 칼럼"
+// 형태로 다시 조립한다. extractTargetVersionFromComment가 %% 스팬으로 못 찾았을 때만
+// 보조로 시도한다(기존에 이미 %%로 되던 표는 그대로 두고, 이 표기법만 쓰는 표를 추가 대응).
+function extractTargetVersionFromCellStyledTable(section, targetNorm) {
+  const rows = section.split(/\r?\n\s*\r?\n/);
+  for (const row of rows) {
+    const cells = [];
+    for (const rawLine of row.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line.startsWith("|")) continue;
+      if (/^\|<\s*$/.test(line)) continue; // 병합된 빈 칸 - 새 셀 아님
+      const m = /^\|(?:\([^)]*\))?(.*)$/.exec(line);
+      if (!m) continue;
+      // 표의 마지막 셀은 줄바꿈 없이 표 닫는 토큰("}]")이 바로 이어 붙기도 한다(예: "v1.6}]") -
+      // 그것도 뒤쪽 백슬래시 이어붙이기 표시와 같이 떼어낸다.
+      cells.push(m[1].replace(/(?:\\+|\}\])+\s*$/, "").trim());
+    }
+    if (cells.length < 2) continue;
+    const nameText = cells.slice(0, -1).join(" ");
+    if (!normalizeNameForRowMatch(nameText).includes(targetNorm)) continue;
+    const value = cells[cells.length - 1].trim();
+    if (VERSION_FULLMATCH_RE.test(value) || DATE_FULLMATCH_RE.test(value)) {
+      return { value: value.replace(/^[vV]+/, ""), failReason: null };
+    }
+    return { value: null, failReason: `'${value}' 형식을 인식하지 못함` };
+  }
+  return null; // 이 표에서는 못 찾음 - 호출부가 기존 실패 사유로 처리
+}
+
 /**
  * Review Report PA 아이템의 코멘트(자유 텍스트 Wiki 표)에서 "리뷰 대상 문서명" 표에 적힌
  * trackerName과 같은 행(row)의 값(버전, 또는 Test Result의 경우 대상 완료일 YYMMDD 6자리)을
@@ -92,9 +124,23 @@ function isDateBasedTracker(trackerNameRaw) {
  *
  * @returns {{value: string|null, failReason: string|null}}
  */
+const RAW_SNIPPET_MAX_LEN = 600;
+function truncateSnippet(text) {
+  return text.length > RAW_SNIPPET_MAX_LEN ? `${text.slice(0, RAW_SNIPPET_MAX_LEN)} …(생략)` : text;
+}
+
 function extractTargetVersionFromComment(commentText, trackerName) {
+  // 판정 불가로 끝날 때, 그 원인이 된 원본 위키 마크업 일부를 같이 실어 보낸다("🔍 리뷰 대상
+  // 버전 자동 확인 불가" 안내에 표시됨) - 이 정규식들이 못 알아본 새로운 표 형식이 또 나왔을 때,
+  // codebeamer REST API를 따로 조회하지 않고도 화면에서 바로 원인을 확인할 수 있게 하기 위함.
+  const fail = (reason, snippetSource) => ({
+    value: null,
+    failReason: reason,
+    rawSnippet: snippetSource ? truncateSnippet(snippetSource) : undefined,
+  });
+
   if (!commentText) {
-    return { value: null, failReason: "리뷰 코멘트가 비어있음" };
+    return fail("리뷰 코멘트가 비어있음");
   }
 
   // 표 제목이 "리뷰 대상 문서명"/"리뷰 대상 문서"/"리뷰 대상" 등 작성자마다 수기로 다르게
@@ -108,7 +154,7 @@ function extractTargetVersionFromComment(commentText, trackerName) {
     markerPositions.push(mm.index);
   }
   if (markerPositions.length === 0) {
-    return { value: null, failReason: "'대상' 표를 찾을 수 없음" };
+    return fail("'대상' 표를 찾을 수 없음", commentText);
   }
 
   let tableBounds = null;
@@ -117,38 +163,47 @@ function extractTargetVersionFromComment(commentText, trackerName) {
     if (tableBounds !== null) break;
   }
   if (tableBounds === null) {
-    return { value: null, failReason: "표 구조를 인식하지 못함" };
+    return fail("표 구조를 인식하지 못함", commentText.slice(markerPositions[0]));
   }
   const section = commentText.slice(tableBounds[0], tableBounds[1]);
+
+  const targetNorm = normalizeNameForRowMatch(stripTrailingQualifier(stripProcessTag(trackerName)));
+  if (!targetNorm) {
+    return fail("대상 트래커명을 알 수 없음", section);
+  }
 
   // codebeamer Wiki 서식: %%(color:rgb(r,g,b);...)내용%! 형태로 셀 내용(버전/날짜)만 색이
   // 입혀져 있고, 문서명은 그 앞에 일반 텍스트로 적혀있다 (표 한 행 = 문서명 + 색 입힌 값)
   VALUE_SPAN_RE.lastIndex = 0;
   const valueSpans = [...section.matchAll(VALUE_SPAN_RE)];
-  if (valueSpans.length === 0) {
-    return { value: null, failReason: "버전(또는 날짜) 값을 인식하지 못함" };
-  }
-
-  const targetNorm = normalizeNameForRowMatch(stripTrailingQualifier(stripProcessTag(trackerName)));
-  if (!targetNorm) {
-    return { value: null, failReason: "대상 트래커명을 알 수 없음" };
-  }
-
-  let prevEnd = 0;
-  for (const m of valueSpans) {
-    const nameChunk = section.slice(prevEnd, m.index);
-    prevEnd = m.index + m[0].length;
-    if (normalizeNameForRowMatch(nameChunk).includes(targetNorm)) {
-      // Python의 .strip().strip("\\").strip()과 동일: 양끝 공백 -> 양끝 백슬래시 -> 양끝 공백
-      let value = m[1].trim().replace(/^\\+/, "").replace(/\\+$/, "").trim();
-      if (VERSION_FULLMATCH_RE.test(value) || DATE_FULLMATCH_RE.test(value)) {
-        return { value: value.replace(/^[vV]+/, ""), failReason: null };
+  if (valueSpans.length > 0) {
+    let prevEnd = 0;
+    for (const m of valueSpans) {
+      const nameChunk = section.slice(prevEnd, m.index);
+      prevEnd = m.index + m[0].length;
+      if (normalizeNameForRowMatch(nameChunk).includes(targetNorm)) {
+        // Python의 .strip().strip("\\").strip()과 동일: 양끝 공백 -> 양끝 백슬래시 -> 양끝 공백
+        let value = m[1].trim().replace(/^\\+/, "").replace(/\\+$/, "").trim();
+        if (VERSION_FULLMATCH_RE.test(value) || DATE_FULLMATCH_RE.test(value)) {
+          return { value: value.replace(/^[vV]+/, ""), failReason: null };
+        }
+        return fail(`'${value}' 형식을 인식하지 못함`, section);
       }
-      return { value: null, failReason: `'${value}' 형식을 인식하지 못함` };
     }
   }
 
-  return { value: null, failReason: "표에서 이 산출물과 일치하는 행을 찾지 못함" };
+  // %% 스팬 방식으로 못 찾았으면(스팬 자체가 없거나, 있어도 우리 산출물 행이 아니면), 셀
+  // 자체에 스타일을 입히는 표 문법으로 한 번 더 시도한다(extractTargetVersionFromCellStyledTable
+  // 참고 - 실제로 이 표기법만 쓰는 표가 있어서 추가함).
+  const cellStyledResult = extractTargetVersionFromCellStyledTable(section, targetNorm);
+  if (cellStyledResult) {
+    return cellStyledResult.failReason ? fail(cellStyledResult.failReason, section) : cellStyledResult;
+  }
+
+  if (valueSpans.length === 0) {
+    return fail("버전(또는 날짜) 값을 인식하지 못함", section);
+  }
+  return fail("표에서 이 산출물과 일치하는 행을 찾지 못함", section);
 }
 
 /** codebeamer의 ISO 8601 날짜/시각 문자열을 YYMMDD 6자리로 변환한다 (문자열의 날짜 부분을 그대로

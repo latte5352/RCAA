@@ -364,7 +364,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
   const itemFetchIncomplete = trackerItemResult.incomplete;
   const tName = tracker.name || "";
 
-  let rrData = { num: "해당없음", time: "해당없음", status: "해당없음", isUpload: "해당없음", targetVersion: "", versionCheckFailReason: "" };
+  let rrData = { num: "해당없음", time: "해당없음", status: "해당없음", isUpload: "해당없음", targetVersion: "", versionCheckFailReason: "", versionCheckRawSnippet: "" };
   if (rrUri) {
     const rrResp = await client.fetchAllItems(`https://codebeamer.slworld.com/cb/rest${rrUri}/items`);
     const rrItems = rrResp.items;
@@ -374,6 +374,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
 
       let targetVersion = "";
       let versionCheckFailReason = "리뷰레포트 PA 아이템 없음";
+      let versionCheckRawSnippet = "";
       if (paItem) {
         const commentsResp = await client.getJsonSoft(`https://codebeamer.slworld.com/cb/rest/v3/items/${paItem.id}/comments`);
         if (commentsResp.ok) {
@@ -385,6 +386,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
           const extracted = extractTargetVersionFromComment(combinedText, tName);
           targetVersion = extracted.value || "";
           versionCheckFailReason = extracted.failReason || "";
+          versionCheckRawSnippet = extracted.rawSnippet || "";
         } else {
           versionCheckFailReason = "리뷰 코멘트 조회 실패";
         }
@@ -403,9 +405,10 @@ async function processTrackerRow(client, mergedRow, ctx) {
         isUpload: isReviewStatusUpload || isReleasedUpload,
         targetVersion,
         versionCheckFailReason,
+        versionCheckRawSnippet,
       };
     } else {
-      rrData = { num: 0, time: "", status: "", isUpload: false, targetVersion: "", versionCheckFailReason: "" };
+      rrData = { num: 0, time: "", status: "", isUpload: false, targetVersion: "", versionCheckFailReason: "", versionCheckRawSnippet: "" };
     }
   }
 
@@ -478,6 +481,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
     createDateCurrent: hInfo.createDateCurrent,
     targetVersion: rrData.targetVersion,
     versionCheckFailReason: rrData.versionCheckFailReason,
+    versionCheckRawSnippet: rrData.versionCheckRawSnippet,
     isEventBased: await ctx.isEventbasedWorkflow(uri),
     testResultClosedDate: dateBasedClosedDate,
     itemFetchIncomplete,
