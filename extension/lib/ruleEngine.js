@@ -33,7 +33,13 @@ const UPLOAD_TRUE_STATUSES = new Set(["Approved", "Internal Baselined", "Gate Ba
 const FINALIZED_STATUSES = new Set(["Approved", "Internal Baselined", "Gate Baselined"]);
 const UPLOAD_FALSE_STATUSES = new Set(["In Review", "Open"]);
 const EVENTBASED_TERMINAL_STATUSES = new Set(["Released", "Read Only"]);
-const PR_IN_DESC_RE = /\bPR[^\d]*?(\d+)/gi; // 하이픈 유무와 무관하게 PR 뒤 첫 숫자를 PR 번호로 인식
+// "PR" 바로 뒤(공백/콜론/하이픈/물결 0~3글자 이내)에 오는 숫자만 PR 번호로 인식한다.
+// 예전엔 [^\d]*?로 아무 문자든 건너뛰고 첫 숫자를 잡았는데, "PR ID & CR ID :" 같은 라벨
+// 뒤에 codebeamer 리치텍스트 에디터가 자동으로 붙이는 스타일 마크업(예: text-indent:0px)의
+// "0"까지 PR 번호로 잘못 캡처하는 문제가 있었다(실사례: 라벨 뒤에 진짜 번호 "PR~-1158"이
+// 따로 또 있는데도, 그 사이에 낀 "0"을 먼저 잡아버림). PR-123/PR123/PR 123/PR~-456처럼
+// 실제로 쓰이는 표기는 전부 이 범위 안에 들어온다.
+const PR_IN_DESC_RE = /\bPR[\s:\-~]{0,3}(\d+)/gi;
 
 export const DEFAULT_PERIODIC_CADENCE = "biweekly";
 export const DEFAULT_PERIODIC_ANCHOR = 0; // weekly/biweekly: 요일(0=월~6=일), monthly: 일자(1~31)

@@ -23,9 +23,10 @@ function stripBracketTag(name) {
   return (name || "").replace(BRACKET_TAG_STRIP_RE, "").trim();
 }
 
-// ruleEngine.js의 PR_IN_DESC_RE와 동일한 패턴(하이픈 유무와 무관하게 PR 뒤 첫 숫자를 PR 번호로
-// 인식) - 여기서는 규칙 판정이 아니라 "문서 이력에 PR 번호가 있는지" 확인용으로 쓴다.
-const PR_IN_DESC_RE = /\bPR[^\d]*?(\d+)/gi;
+// ruleEngine.js의 PR_IN_DESC_RE와 동일한 패턴("PR" 바로 뒤 공백/콜론/하이픈/물결 0~3글자
+// 이내에 오는 숫자만 PR 번호로 인식 - 그 이유는 ruleEngine.js 쪽 주석 참고) - 여기서는 규칙
+// 판정이 아니라 "문서 이력에 PR 번호가 있는지" 확인용으로 쓴다.
+const PR_IN_DESC_RE = /\bPR[\s:\-~]{0,3}(\d+)/gi;
 
 /**
  * checkDocHistoryRule(ruleEngine.js)이 승인/베이스라인 완료 상태라 원래 방식(현재 열려있는
