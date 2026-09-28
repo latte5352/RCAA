@@ -43,6 +43,8 @@ const manualStatusCheckWrap = document.getElementById("manualStatusCheckWrap");
 const manualStatusCheckList = document.getElementById("manualStatusCheckList");
 const docHistoryManualCheckWrap = document.getElementById("docHistoryManualCheckWrap");
 const docHistoryManualCheckList = document.getElementById("docHistoryManualCheckList");
+const noTrackerManualCheckWrap = document.getElementById("noTrackerManualCheckWrap");
+const noTrackerManualCheckList = document.getElementById("noTrackerManualCheckList");
 const incompleteFetchWrap = document.getElementById("incompleteFetchWrap");
 const incompleteFetchList = document.getElementById("incompleteFetchList");
 const toolbarRow = document.getElementById("toolbarRow");
@@ -72,6 +74,7 @@ let warningsData = {
   incompleteFetchTrackers: [],
   manualStatusCheckTrackers: [],
   docHistoryManualCheckTrackers: [],
+  noTrackerManualCheckTrackers: [],
 };
 let reviewStatus = "pending"; // "pending" | "applied"
 let currentProjectId = null;
@@ -163,11 +166,12 @@ function badge(label, ruleValue, ruleKey, isManualPending) {
 const RULE_LABELS = { saveRule: "저장", versionRule: "버전", docHistoryRule: "이력", statusRule: "상태" };
 const ALL_RULE_KEYS = ["saveRule", "versionRule", "docHistoryRule", "statusRule"];
 
-// "직접확인 필요"로 뜨는 두 가지(🙋 상태 규칙 자동 판정 불가, 📝 문서 이력 PR 기재 확인 필요)만
-// 여기서 사람이 OK/NG/N-A를 직접 고르고 코멘트를 쓰게 강제한다(필수). 이벤트성/Test Result류/승인
-// 완료로 버전 규칙이 아예 스킵되는 경우처럼 "원래 그 규칙 대상이 아닌" N/A는 대상이 아니다 -
-// 그런 건 도구가 이미 정확히 판단한 거라 사람이 매번 다시 확인할 이유가 없다. 이 목록에 없는
-// 나머지 규칙들은 강제는 아니지만, createManualRow에서 "선택 사항"으로 똑같이 고칠 수 있게 한다.
+// "직접확인 필요"로 뜨는 세 가지(🙋 상태 규칙 자동 판정 불가, 📝 문서 이력 PR 기재 확인 필요,
+// 📂 codebeamer 밖 산출물 - 저장/버전/이력 규칙 확인 필요)만 여기서 사람이 OK/NG/N-A를 직접
+// 고르고 코멘트를 쓰게 강제한다(필수). 이벤트성/Test Result류/승인 완료로 버전 규칙이 아예
+// 스킵되는 경우처럼 "원래 그 규칙 대상이 아닌" N/A는 대상이 아니다 - 그런 건 도구가 이미
+// 정확히 판단한 거라 사람이 매번 다시 확인할 이유가 없다. 이 목록에 없는 나머지 규칙들은
+// 강제는 아니지만, createManualRow에서 "선택 사항"으로 똑같이 고칠 수 있게 한다.
 function getManualCheckFlags(record) {
   const flags = [];
   if ((warningsData.manualStatusCheckTrackers || []).includes(record.trackerName)) {
@@ -178,6 +182,14 @@ function getManualCheckFlags(record) {
   );
   if (docHistEntry) {
     flags.push({ rule: "docHistoryRule", label: "이력", reason: docHistEntry.reason });
+  }
+  // Source Code처럼 codebeamer에 연결된 트래커 자체가 없는 산출물(noTrackerManualCheckTrackers) -
+  // 상태 규칙은 리뷰레포트 개념 자체가 없어 그냥 N/A로 두고, 나머지 세 규칙만 강제한다.
+  if ((warningsData.noTrackerManualCheckTrackers || []).includes(record.trackerName)) {
+    const reason = "실제 산출물이 codebeamer 밖(Bitbucket 등)에 있어 자동 판정이 불가능함";
+    flags.push({ rule: "saveRule", label: "저장", reason });
+    flags.push({ rule: "versionRule", label: "버전", reason });
+    flags.push({ rule: "docHistoryRule", label: "이력", reason });
   }
   return flags;
 }
@@ -532,6 +544,7 @@ function renderWarnings(data) {
     incompleteFetchTrackers = [],
     manualStatusCheckTrackers = [],
     docHistoryManualCheckTrackers = [],
+    noTrackerManualCheckTrackers = [],
   } = data;
 
   if (unregisteredTrackers.length) {
@@ -608,6 +621,10 @@ function renderWarnings(data) {
       return row;
     });
     docHistoryManualCheckWrap.classList.remove("hidden");
+  }
+  if (noTrackerManualCheckTrackers.length) {
+    renderWarnList(noTrackerManualCheckList, noTrackerManualCheckTrackers, (name) => simpleRow(name));
+    noTrackerManualCheckWrap.classList.remove("hidden");
   }
   if (incompleteFetchTrackers.length) {
     renderWarnList(incompleteFetchList, incompleteFetchTrackers, (name) => simpleRow(name));
@@ -804,6 +821,7 @@ async function runNewAudit(client, username) {
   setProgress(60, "감사 규칙 검사 중...");
   const {
     records: auditedRecords, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers, docHistoryManualCheckTrackers,
+    noTrackerManualCheckTrackers,
   } = runAudit(records, {
     cadence, anchor, periodicTrackers: PERIODIC_TRACKERS,
   });
@@ -814,7 +832,7 @@ async function runNewAudit(client, username) {
 
   warningsData = {
     unregisteredTrackers, newTrackers, changedTrackers, versionCheckFailures, incompleteFetchTrackers,
-    manualStatusCheckTrackers, docHistoryManualCheckTrackers,
+    manualStatusCheckTrackers, docHistoryManualCheckTrackers, noTrackerManualCheckTrackers,
   };
 
   setProgress(100, "검토 대기 중 (codebeamer에는 아직 반영 안 됨)");

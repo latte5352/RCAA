@@ -43,6 +43,7 @@
   #versionFailWrap { background: #fdf0e6; border: 1px solid #e8a05a; color: #a85c1a; }
   #manualStatusCheckWrap { background: #f1e8fd; border: 1px solid #b39ddb; color: #5e35b1; }
   #docHistoryManualCheckWrap { background: #e6f4ea; border: 1px solid #81c784; color: #2e7d32; }
+  #noTrackerManualCheckWrap { background: #e3f2fd; border: 1px solid #64b5f6; color: #1565c0; }
   #incompleteFetchWrap { background: #fdecea; border: 1px solid #e57373; color: #c0392b; }
   #cmRoleBlockWrap { margin-bottom: 14px; padding: 14px 18px; border-radius: 4px; font-size: 14px; line-height: 1.6; background: #2d2d2d; border: 1px solid #c0392b; color: #fff; }
   #cmRoleBlockWrap h2 { font-size: 14px; margin: 0 0 8px; color: #ff8a80; }
@@ -151,6 +152,10 @@
     <details id="docHistoryManualCheckWrap" class="warn hidden">
       <summary>📝 문서 이력 PR 기재 확인 필요 <span class="warn-count"></span></summary>
       <div id="docHistoryManualCheckList"></div>
+    </details>
+    <details id="noTrackerManualCheckWrap" class="warn hidden">
+      <summary>📂 codebeamer 밖 산출물 - 저장/버전/이력 직접 확인 필요 <span class="warn-count"></span></summary>
+      <div id="noTrackerManualCheckList"></div>
     </details>
     <details id="incompleteFetchWrap" class="warn hidden">
       <summary>⚠ 데이터 조회 불완전 (결과 신뢰 불가 - 재감사 권장) <span class="warn-count"></span></summary>

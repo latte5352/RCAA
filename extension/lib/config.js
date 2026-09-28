@@ -50,19 +50,17 @@ export const REVIEW_REPORT_ADDITIONAL_TARGETS = {
 // Item List(CIL)엔 등재돼 있지만, 실제 산출물이 codebeamer 밖(예: Bitbucket)에 있어서 애초에
 // 대응하는 codebeamer 트래커가 존재하지 않는 이름들. 이름이 살짝 달라서 매칭에 실패한
 // "미등재"와는 다른 케이스라서 구분해서 관리한다 - 여기 있는 이름은 "미등재" 경고 대신,
-// 감사 결과 표에 "직접 확인 필요" 안내로 뜬다(자동으로 판정할 수 없으므로). 현재는 해당하는
-// 이름이 없어 비어있지만, ITEM_LIST_ENTRIES_EXCLUDED_FROM_AUDIT와 달리 "감사 결과에는
-// 나오되 항상 사람이 확인" 케이스가 생기면 여기에 추가한다.
-export const ITEM_LIST_ENTRIES_WITHOUT_TRACKER = [];
+// 감사 결과 표에 "직접 확인 필요" 안내로 뜬다(자동으로 판정할 수 없으므로). Source Code는
+// codebeamer가 아니라 Bitbucket 등에 있어서 자동 판정 자체가 불가능해 여기 있다 - 그 프로젝트
+// CIL에 "Source Code" 항목이 아예 없으면(Source Code를 안 만드는 프로젝트) 그냥 대응하는
+// 행 자체가 없어서 이 목록과 무관하다.
+export const ITEM_LIST_ENTRIES_WITHOUT_TRACKER = ["Source Code"];
 
 // Item List(CIL)엔 등재돼 있지만 codebeamer 트래커가 없고, 애초에 자동 감사 자체가 불가능해서
-// (예: Source Code - 항상 Bitbucket 등에서 사람이 직접 확인해야 함) 감사 결과 표/트래커
-// 선택 목록에도 아예 노출하지 않는 이름들. 위 ITEM_LIST_ENTRIES_WITHOUT_TRACKER와 달리 "직접
-// 확인 필요" 안내조차 남기지 않고 완전히 제외한다. 앞에 차종 코드가 붙어도(예: "NQ6 Source
-// Code") 매칭되도록 접미사(끝나는지) 기준으로 비교한다(matchConfiguredSuffix).
-export const ITEM_LIST_ENTRIES_EXCLUDED_FROM_AUDIT = [
-  "Source Code",
-];
+// 감사 결과 표/트래커 선택 목록에도 아예 노출하지 않는 이름들. 위 ITEM_LIST_ENTRIES_WITHOUT_TRACKER와
+// 달리 "직접 확인 필요" 안내조차 남기지 않고 완전히 제외한다. 앞에 차종 코드가 붙어도 매칭되도록
+// 접미사(끝나는지) 기준으로 비교한다(matchConfiguredSuffix). 현재는 해당하는 이름이 없어 비어있다.
+export const ITEM_LIST_ENTRIES_EXCLUDED_FROM_AUDIT = [];
 
 // 이 트래커들은 상태 규칙을 자동으로 OK/NG 판정하지 않고 항상 사람이 직접 확인하게 한다
 // (예: 리뷰/승인 방식이 표준 워크플로우와 달라서 자동 판정이 신뢰되지 않는 경우).
@@ -70,3 +68,9 @@ export const STATUS_RULE_MANUAL_CHECK_TRACKERS = [
   "Hardware PCB Package",
   "Hardware Circuit Diagram Package",
 ];
+
+// ITEM_LIST_ENTRIES_WITHOUT_TRACKER에 있는 트래커 중에서도, 상태 규칙(리뷰레포트 대조)은
+// 애초에 리뷰레포트 개념 자체가 없어서 그냥 N/A로 두고, 나머지 저장/버전/문서이력 규칙은
+// 사람이 직접 입력하지 않으면 반영을 막아야 하는 트래커들(예: Source Code - 실제 산출물이
+// Bitbucket 등에 있어서 자동 판정이 아예 불가능함).
+export const NO_TRACKER_FORCE_MANUAL_RULES = ["Source Code"];

@@ -16,7 +16,7 @@
 
 import { stripProcessTag, stripTrailingQualifier, nameEndsWith, matchConfiguredSuffix, isDateBasedTracker } from "./wikiTable.js";
 import { parseDateOnly, formatDateOnly, businessDaysBetween } from "./businessDays.js";
-import { STATUS_RULE_MANUAL_CHECK_TRACKERS } from "./config.js";
+import { STATUS_RULE_MANUAL_CHECK_TRACKERS, NO_TRACKER_FORCE_MANUAL_RULES } from "./config.js";
 
 const TRAILING_QUALIFIER_RE = /(\s*\([^)]*\))+$/;
 // 문자로만 이뤄진 짧은 진짜 확장자(zip/docx/pdf 등)로 끝날 때만 파일 확장자로 인식한다 -
@@ -428,7 +428,7 @@ export function checkReviewReportVersionRule(record, nameIndex) {
  * (1=OK, 2=NG, null=대상 아님)과 comment(간결한 사유, codebeamer 전송용),
  * detailComment(상세 사유 배열)를 채워 넣는다.
  *
- * @returns {{records, versionCheckFailures: Array<{trackerName, reason, rawSnippet}>, incompleteFetchTrackers: string[], manualStatusCheckTrackers: string[], docHistoryManualCheckTrackers: Array<{trackerName, reason}>}}
+ * @returns {{records, versionCheckFailures: Array<{trackerName, reason, rawSnippet}>, incompleteFetchTrackers: string[], manualStatusCheckTrackers: string[], docHistoryManualCheckTrackers: Array<{trackerName, reason}>, noTrackerManualCheckTrackers: string[]}}
  */
 export function runAudit(records, options = {}) {
   const {
@@ -442,6 +442,11 @@ export function runAudit(records, options = {}) {
   const incompleteFetchTrackers = [];
   const manualStatusCheckTrackers = [];
   const docHistoryManualCheckTrackers = [];
+  // ITEM_LIST_ENTRIES_WITHOUT_TRACKER 중에서도 NO_TRACKER_FORCE_MANUAL_RULES에 있는 이름(예:
+  // Source Code)은, 상태 규칙은 그냥 N/A로 두되(리뷰레포트 개념 자체가 없음) 저장/버전/문서이력
+  // 규칙은 사람이 직접 입력하지 않으면 반영을 막아야 한다 - audit.js가 이 목록을 보고 강제
+  // 입력창을 띄운다.
+  const noTrackerManualCheckTrackers = [];
 
   for (const record of records) {
     if (record.itemFetchIncomplete) {
@@ -563,7 +568,17 @@ export function runAudit(records, options = {}) {
       record.comment = ngReasons.join(" / ");
     }
     record.detailComment = detailNgReasons;
+
+    // 연결된 트래커가 없는 항목(noLinkedTracker) 중 NO_TRACKER_FORCE_MANUAL_RULES에 이름이
+    // 있으면(예: Source Code), 저장/버전/문서이력 규칙을 사람이 직접 입력해야 반영할 수 있게
+    // 안내 목록에 올린다(상태 규칙은 그대로 N/A로 둠 - 리뷰레포트 개념 자체가 없으므로).
+    if (record.noLinkedTracker && matchConfiguredSuffix(stripProcessTag(record.trackerName), NO_TRACKER_FORCE_MANUAL_RULES) !== null) {
+      noTrackerManualCheckTrackers.push(record.trackerName);
+    }
   }
 
-  return { records, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers, docHistoryManualCheckTrackers };
+  return {
+    records, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers, docHistoryManualCheckTrackers,
+    noTrackerManualCheckTrackers,
+  };
 }
