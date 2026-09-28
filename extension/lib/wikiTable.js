@@ -83,6 +83,37 @@ function isDateBasedTracker(trackerNameRaw) {
   return DATE_BASED_TRACKER_SUFFIXES.some((suffix) => nameEndsWith(pureName, suffix));
 }
 
+// 셀 스타일(또는 그 안에 다시 감싸는 "%%(...)…%!" 인라인 스팬)을 한 겹씩 벗겨낸다. 스타일
+// 안에 "rgb(255, 255, 255)"처럼 괄호가 중첩돼 있을 수 있어서, 단순히 "첫 번째 만나는 )"에서
+// 끊으면(예전 정규식 방식) 중첩된 괄호의 닫는 괄호를 스타일 그룹의 끝으로 착각해 진짜 값까지
+// 다 뒤섞여버린다("실제로 겪은 문제: v1.31처럼 값 자체는 있었는데, background:rgb(...) 같은
+// 중첩 괄호 때문에 스타일 조각이 값에 섞여 '형식을 인식하지 못함'으로 잘못 실패함"). 그래서
+// 괄호 깊이를 정확히 세어가며 진짜 닫는 괄호를 찾고, "%%"로 시작한 경우에만 뒤에 붙는 "%!"
+// 마감 토큰도 같이 뗀다 - 스타일 레이어가 몇 겹이든(셀 스타일 + 그 안의 색상 스팬처럼) 더
+// 이상 벗길 게 없을 때까지 반복한다.
+function stripStyleWrappers(text) {
+  let t = text;
+  for (;;) {
+    const isSpan = t.startsWith("%%");
+    let rest = isSpan ? t.slice(2) : t;
+    if (!rest.startsWith("(")) break; // 더 이상 스타일 괄호로 시작하지 않음 - 다 벗겨졌음
+    let depth = 0;
+    let closeIdx = -1;
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "(") depth++;
+      else if (rest[i] === ")") {
+        depth--;
+        if (depth === 0) { closeIdx = i; break; }
+      }
+    }
+    if (closeIdx === -1) break; // 괄호가 안 닫힘(형식 이상) - 더 이상 벗기지 않고 그대로 둠
+    rest = rest.slice(closeIdx + 1);
+    if (isSpan) rest = rest.replace(/%!\s*$/, "");
+    t = rest;
+  }
+  return t.trim();
+}
+
 // 표의 %% 인라인 스팬 대신, 셀 자체에 스타일을 입히는 문법("|(색상 등 스타일...)내용" 한
 // 줄이 셀 하나, "|<"는 왼쪽 셀이 옆으로 병합된(colspan) 빈 칸)만 쓰는 표도 실제로 있다(예:
 // "|(color:black;...)v1.6" - %% 스팬 없이 셀 스타일 파라미터로만 색을 줌). 빈 줄로 행(row)이
@@ -97,11 +128,10 @@ function extractTargetVersionFromCellStyledTable(section, targetNorm) {
       const line = rawLine.trim();
       if (!line.startsWith("|")) continue;
       if (/^\|<\s*$/.test(line)) continue; // 병합된 빈 칸 - 새 셀 아님
-      const m = /^\|(?:\([^)]*\))?(.*)$/.exec(line);
-      if (!m) continue;
       // 표의 마지막 셀은 줄바꿈 없이 표 닫는 토큰("}]")이 바로 이어 붙기도 한다(예: "v1.6}]") -
       // 그것도 뒤쪽 백슬래시 이어붙이기 표시와 같이 떼어낸다.
-      cells.push(m[1].replace(/(?:\\+|\}\])+\s*$/, "").trim());
+      const content = stripStyleWrappers(line.slice(1)).replace(/(?:\\+|\}\])+\s*$/, "").trim();
+      cells.push(content);
     }
     if (cells.length < 2) continue;
     const nameText = cells.slice(0, -1).join(" ");
