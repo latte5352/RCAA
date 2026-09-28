@@ -40,6 +40,15 @@
   #checkpointShareRow { display: flex; gap: 6px; margin-bottom: 4px; }
   #checkpointShareRow button { width: auto; flex: 1; font-size: 12px; padding: 6px; }
   #checkpointShareStatus { font-size: 11px; color: #666; margin: 0 0 8px; line-height: 1.5; }
+
+  #runConfirmOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  #runConfirmBox { background: #fff; border-radius: 6px; padding: 16px; width: 84%; max-width: 300px; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+  #runConfirmTitle { font-size: 14px; font-weight: 700; color: #c0392b; margin-bottom: 8px; }
+  #runConfirmMessage { font-size: 12px; color: #444; line-height: 1.6; margin-bottom: 14px; }
+  #runConfirmButtons { display: flex; gap: 8px; }
+  #runConfirmButtons button { width: auto; flex: 1; margin-bottom: 0; }
+  #runConfirmYesBtn { background: #c0392b; color: #fff; border: 1px solid #c0392b; }
+  #runConfirmNoBtn { background: #f4f4f4; border: 1px solid #ccc; }
 </style>
 </head>
 <body>
@@ -99,6 +108,20 @@
     <button id="runBtn">새 감사 시작</button>
     <div id="step"></div>
     <button id="logoutBtn">로그아웃</button>
+  </div>
+
+  <div id="runConfirmOverlay" class="hidden">
+    <div id="runConfirmBox">
+      <div id="runConfirmTitle">⚠ 새 감사를 시작할까요?</div>
+      <div id="runConfirmMessage">
+        아직 codebeamer에 반영하지 않은 직전 감사 결과가 사라집니다.<br>
+        (문서 이력 체크포인트 등 저장된 감사 로그 자체는 영향받지 않습니다.)
+      </div>
+      <div id="runConfirmButtons">
+        <button id="runConfirmNoBtn" type="button">아니오</button>
+        <button id="runConfirmYesBtn" type="button">예, 새로 시작</button>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="popup.js"></script>

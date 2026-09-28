@@ -41,8 +41,6 @@ const projectFilterNote = document.getElementById("projectFilterNote");
 let allProjects = [];
 let selectedProjectName = null;
 let activeOptionIndex = -1;
-let runConfirmArmed = false;
-let runConfirmTimer = null;
 
 let allTrackerNames = [];
 let trackerNamesLoadedForProject = null;
@@ -54,14 +52,20 @@ let hasStoredTrackerSelection = false; // 이 프로젝트에 대해 세션 중 
 // 조용히 돌아버린다(트래커 선택을 해뒀어도 무시됨) - 그래서 이 플래그로 로딩 중엔 아예 막는다.
 let trackerNamesReady = false;
 
-function resetRunConfirm() {
-  runConfirmArmed = false;
-  clearTimeout(runConfirmTimer);
-  runBtn.textContent = "새 감사 시작";
+const runConfirmOverlay = document.getElementById("runConfirmOverlay");
+const runConfirmYesBtn = document.getElementById("runConfirmYesBtn");
+const runConfirmNoBtn = document.getElementById("runConfirmNoBtn");
+
+function hideRunConfirmModal() {
+  runConfirmOverlay.classList.add("hidden");
+}
+
+function showRunConfirmModal() {
+  runConfirmOverlay.classList.remove("hidden");
 }
 
 async function refreshLastAuditInfo() {
-  resetRunConfirm();
+  hideRunConfirmModal();
   checkpointShareStatus.classList.add("hidden");
   checkpointShareStatus.textContent = "";
   checkpointShareRow.classList.toggle("hidden", !selectedProjectName);
@@ -586,6 +590,31 @@ viewLastBtn.addEventListener("click", async () => {
   stepEl.textContent = "직전 감사 결과 창을 열었습니다.";
 });
 
+// 실제로 감사 창을 여는 부분 - 확인이 필요 없거나(직전 미반영 결과가 없음), 확인 모달에서
+// "예"를 눌렀을 때 호출된다.
+function startNewAudit() {
+  // 주기적 활동 산출물 검사를 당분간 안 하기로 해서 cadence/anchor는 안 보낸다 - audit.js가
+  // URL에 없으면 DEFAULT_PERIODIC_CADENCE/ANCHOR로 자동 대체한다(어차피 이제 안 쓰이지만).
+  const params = new URLSearchParams({
+    project: selectedProjectName,
+    trackerCil: TRACKER_NAME_CIL,
+    trackerNcl: TRACKER_NAME_NCL,
+  });
+  const isPartialSelection = allTrackerNames.length > 0 && selectedTrackerNames.size < allTrackerNames.length;
+  if (isPartialSelection) {
+    params.set("onlyTrackers", JSON.stringify(Array.from(selectedTrackerNames)));
+  }
+  chrome.windows.create({
+    url: chrome.runtime.getURL(`audit.html?${params.toString()}`),
+    type: "popup",
+    width: 1000,
+    height: 750,
+  });
+  stepEl.textContent = isPartialSelection
+    ? `검토 창을 열었습니다 (선택한 트래커 ${selectedTrackerNames.size}개만 감사).`
+    : "검토 창을 열었습니다.";
+}
+
 runBtn.addEventListener("click", async () => {
   const credentials = await getCredentials();
   if (!credentials) {
@@ -608,35 +637,19 @@ runBtn.addEventListener("click", async () => {
   }
 
   const existing = await loadReviewState(selectedProjectName);
-  if (existing && existing.status !== "applied" && !runConfirmArmed) {
-    runConfirmArmed = true;
-    runBtn.textContent = "정말 새로 시작할까요? 직전 결과가 사라집니다 (다시 클릭)";
-    clearTimeout(runConfirmTimer);
-    runConfirmTimer = setTimeout(resetRunConfirm, 4000);
+  if (existing && existing.status !== "applied") {
+    showRunConfirmModal();
     return;
   }
-  resetRunConfirm();
+  startNewAudit();
+});
 
-  // 주기적 활동 산출물 검사를 당분간 안 하기로 해서 cadence/anchor는 안 보낸다 - audit.js가
-  // URL에 없으면 DEFAULT_PERIODIC_CADENCE/ANCHOR로 자동 대체한다(어차피 이제 안 쓰이지만).
-  const params = new URLSearchParams({
-    project: selectedProjectName,
-    trackerCil: TRACKER_NAME_CIL,
-    trackerNcl: TRACKER_NAME_NCL,
-  });
-  const isPartialSelection = allTrackerNames.length > 0 && selectedTrackerNames.size < allTrackerNames.length;
-  if (isPartialSelection) {
-    params.set("onlyTrackers", JSON.stringify(Array.from(selectedTrackerNames)));
-  }
-  chrome.windows.create({
-    url: chrome.runtime.getURL(`audit.html?${params.toString()}`),
-    type: "popup",
-    width: 1000,
-    height: 750,
-  });
-  stepEl.textContent = isPartialSelection
-    ? `검토 창을 열었습니다 (선택한 트래커 ${selectedTrackerNames.size}개만 감사).`
-    : "검토 창을 열었습니다.";
+runConfirmYesBtn.addEventListener("click", () => {
+  hideRunConfirmModal();
+  startNewAudit();
+});
+runConfirmNoBtn.addEventListener("click", () => {
+  hideRunConfirmModal();
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
