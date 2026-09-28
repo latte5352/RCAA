@@ -585,20 +585,31 @@ function renderWarnings(data) {
       reason.className = "version-fail-reason";
       reason.textContent = f.reason;
       row.appendChild(reason);
-      // 파서가 못 알아본 원본 위키 마크업을 그대로 보여준다 - 앞으로 또 다른 표 형식이
-      // 나와도, codebeamer를 따로 조회하지 않고 여기서 바로 원인을 확인/전달할 수 있게.
-      if (f.rawSnippet) {
-        const rawDetails = document.createElement("details");
-        rawDetails.className = "raw-snippet-details";
-        const summary = document.createElement("summary");
-        summary.textContent = "원본 마크업 보기 (진단용)";
-        rawDetails.appendChild(summary);
-        const pre = document.createElement("pre");
-        pre.className = "raw-snippet-pre";
-        pre.textContent = f.rawSnippet;
-        rawDetails.appendChild(pre);
-        row.appendChild(rawDetails);
+      // 위키 표 마크업은 형식이 계속 달라져서 여기서 파싱한 원본을 그대로 보여주는 건
+      // 사람이 읽기 힘들다 - 그 대신 codebeamer로 바로 이동하는 링크 두 개(대상 산출물
+      // 자신 / 그 버전을 기재한 리뷰레포트)를 줘서, 실제 렌더링된 화면에서 직접 보고
+      // 판단할 수 있게 한다.
+      const linksRow = document.createElement("div");
+      linksRow.className = "version-fail-links";
+      if (f.targetPaItemId) {
+        const link = document.createElement("a");
+        link.className = "version-fail-link";
+        link.href = `https://codebeamer.slworld.com/cb/issue/${f.targetPaItemId}`;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "🔗 대상 산출물에서 직접 확인";
+        linksRow.appendChild(link);
       }
+      if (f.reviewReportPaItemId) {
+        const link = document.createElement("a");
+        link.className = "version-fail-link";
+        link.href = `https://codebeamer.slworld.com/cb/issue/${f.reviewReportPaItemId}`;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "🔗 리뷰레포트 PA 항목에서 직접 확인";
+        linksRow.appendChild(link);
+      }
+      row.appendChild(linksRow);
       return row;
     });
     versionFailWrap.classList.remove("hidden");

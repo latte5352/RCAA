@@ -124,23 +124,9 @@ function extractTargetVersionFromCellStyledTable(section, targetNorm) {
  *
  * @returns {{value: string|null, failReason: string|null}}
  */
-const RAW_SNIPPET_MAX_LEN = 600;
-function truncateSnippet(text) {
-  return text.length > RAW_SNIPPET_MAX_LEN ? `${text.slice(0, RAW_SNIPPET_MAX_LEN)} …(생략)` : text;
-}
-
 function extractTargetVersionFromComment(commentText, trackerName) {
-  // 판정 불가로 끝날 때, 그 원인이 된 원본 위키 마크업 일부를 같이 실어 보낸다("🔍 리뷰 대상
-  // 버전 자동 확인 불가" 안내에 표시됨) - 이 정규식들이 못 알아본 새로운 표 형식이 또 나왔을 때,
-  // codebeamer REST API를 따로 조회하지 않고도 화면에서 바로 원인을 확인할 수 있게 하기 위함.
-  const fail = (reason, snippetSource) => ({
-    value: null,
-    failReason: reason,
-    rawSnippet: snippetSource ? truncateSnippet(snippetSource) : undefined,
-  });
-
   if (!commentText) {
-    return fail("리뷰 코멘트가 비어있음");
+    return { value: null, failReason: "리뷰 코멘트가 비어있음" };
   }
 
   // 표 제목이 "리뷰 대상 문서명"/"리뷰 대상 문서"/"리뷰 대상" 등 작성자마다 수기로 다르게
@@ -154,7 +140,7 @@ function extractTargetVersionFromComment(commentText, trackerName) {
     markerPositions.push(mm.index);
   }
   if (markerPositions.length === 0) {
-    return fail("'대상' 표를 찾을 수 없음", commentText);
+    return { value: null, failReason: "'대상' 표를 찾을 수 없음" };
   }
 
   let tableBounds = null;
@@ -163,13 +149,13 @@ function extractTargetVersionFromComment(commentText, trackerName) {
     if (tableBounds !== null) break;
   }
   if (tableBounds === null) {
-    return fail("표 구조를 인식하지 못함", commentText.slice(markerPositions[0]));
+    return { value: null, failReason: "표 구조를 인식하지 못함" };
   }
   const section = commentText.slice(tableBounds[0], tableBounds[1]);
 
   const targetNorm = normalizeNameForRowMatch(stripTrailingQualifier(stripProcessTag(trackerName)));
   if (!targetNorm) {
-    return fail("대상 트래커명을 알 수 없음", section);
+    return { value: null, failReason: "대상 트래커명을 알 수 없음" };
   }
 
   // codebeamer Wiki 서식: %%(color:rgb(r,g,b);...)내용%! 형태로 셀 내용(버전/날짜)만 색이
@@ -187,7 +173,7 @@ function extractTargetVersionFromComment(commentText, trackerName) {
         if (VERSION_FULLMATCH_RE.test(value) || DATE_FULLMATCH_RE.test(value)) {
           return { value: value.replace(/^[vV]+/, ""), failReason: null };
         }
-        return fail(`'${value}' 형식을 인식하지 못함`, section);
+        return { value: null, failReason: `'${value}' 형식을 인식하지 못함` };
       }
     }
   }
@@ -196,14 +182,12 @@ function extractTargetVersionFromComment(commentText, trackerName) {
   // 자체에 스타일을 입히는 표 문법으로 한 번 더 시도한다(extractTargetVersionFromCellStyledTable
   // 참고 - 실제로 이 표기법만 쓰는 표가 있어서 추가함).
   const cellStyledResult = extractTargetVersionFromCellStyledTable(section, targetNorm);
-  if (cellStyledResult) {
-    return cellStyledResult.failReason ? fail(cellStyledResult.failReason, section) : cellStyledResult;
-  }
+  if (cellStyledResult) return cellStyledResult;
 
   if (valueSpans.length === 0) {
-    return fail("버전(또는 날짜) 값을 인식하지 못함", section);
+    return { value: null, failReason: "버전(또는 날짜) 값을 인식하지 못함" };
   }
-  return fail("표에서 이 산출물과 일치하는 행을 찾지 못함", section);
+  return { value: null, failReason: "표에서 이 산출물과 일치하는 행을 찾지 못함" };
 }
 
 /** codebeamer의 ISO 8601 날짜/시각 문자열을 YYMMDD 6자리로 변환한다 (문자열의 날짜 부분을 그대로

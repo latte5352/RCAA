@@ -331,6 +331,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
       itemCount: 0,
       fileName: "",
       paItemName: "",
+      paItemId: null,
       firstEdit: "",
       lastEdit: "",
       status: null,
@@ -347,6 +348,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
       createDateCurrent: false,
       targetVersion: "",
       versionCheckFailReason: "",
+      versionCheckPaItemId: null,
       isEventBased: false,
       testResultClosedDate: "",
       itemFetchIncomplete: false,
@@ -365,7 +367,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
   const itemFetchIncomplete = trackerItemResult.incomplete;
   const tName = tracker.name || "";
 
-  let rrData = { num: "해당없음", time: "해당없음", status: "해당없음", isUpload: "해당없음", targetVersion: "", versionCheckFailReason: "", versionCheckRawSnippet: "" };
+  let rrData = { num: "해당없음", time: "해당없음", status: "해당없음", isUpload: "해당없음", targetVersion: "", versionCheckFailReason: "", versionCheckPaItemId: null };
   if (rrUri) {
     const rrResp = await client.fetchAllItems(`https://codebeamer.slworld.com/cb/rest${rrUri}/items`);
     const rrItems = rrResp.items;
@@ -375,7 +377,9 @@ async function processTrackerRow(client, mergedRow, ctx) {
 
       let targetVersion = "";
       let versionCheckFailReason = "리뷰레포트 PA 아이템 없음";
-      let versionCheckRawSnippet = "";
+      // 판정 실패 시 사람이 codebeamer에서 직접 열어볼 수 있게 이 리뷰레포트 PA 아이템의
+      // ID를 같이 실어 보낸다(audit.js가 "리뷰레포트 PA 항목에서 직접 확인" 링크로 씀).
+      const versionCheckPaItemId = paItem ? paItem.id : null;
       if (paItem) {
         const commentsResp = await client.getJsonSoft(`https://codebeamer.slworld.com/cb/rest/v3/items/${paItem.id}/comments`);
         if (commentsResp.ok) {
@@ -387,7 +391,6 @@ async function processTrackerRow(client, mergedRow, ctx) {
           const extracted = extractTargetVersionFromComment(combinedText, tName);
           targetVersion = extracted.value || "";
           versionCheckFailReason = extracted.failReason || "";
-          versionCheckRawSnippet = extracted.rawSnippet || "";
         } else {
           versionCheckFailReason = "리뷰 코멘트 조회 실패";
         }
@@ -406,10 +409,10 @@ async function processTrackerRow(client, mergedRow, ctx) {
         isUpload: isReviewStatusUpload || isReleasedUpload,
         targetVersion,
         versionCheckFailReason,
-        versionCheckRawSnippet,
+        versionCheckPaItemId,
       };
     } else {
-      rrData = { num: 0, time: "", status: "", isUpload: false, targetVersion: "", versionCheckFailReason: "", versionCheckRawSnippet: "" };
+      rrData = { num: 0, time: "", status: "", isUpload: false, targetVersion: "", versionCheckFailReason: "", versionCheckPaItemId: null };
     }
   }
 
@@ -466,6 +469,10 @@ async function processTrackerRow(client, mergedRow, ctx) {
     itemCount: items.length,
     fileName: tType === "Document" && items.length > 0 ? items[0].fileName || "" : "",
     paItemName: paItemObj ? paItemObj.name || "" : "",
+    // 대상 산출물(이 트래커) 자신의 PA 아이템 ID - "리뷰 대상 버전 자동 확인 불가" 안내에서
+    // 리뷰레포트 PA 항목 링크뿐 아니라, 실제로 버전을 확인해야 할 대상 문서 자체로도 바로
+    // 이동할 수 있게 audit.js가 링크로 쓴다.
+    paItemId: paId,
     firstEdit: hInfo.first,
     lastEdit: hInfo.last,
     status: hInfo.status,
@@ -482,7 +489,7 @@ async function processTrackerRow(client, mergedRow, ctx) {
     createDateCurrent: hInfo.createDateCurrent,
     targetVersion: rrData.targetVersion,
     versionCheckFailReason: rrData.versionCheckFailReason,
-    versionCheckRawSnippet: rrData.versionCheckRawSnippet,
+    versionCheckPaItemId: rrData.versionCheckPaItemId,
     isEventBased: await ctx.isEventbasedWorkflow(uri),
     testResultClosedDate: dateBasedClosedDate,
     itemFetchIncomplete,

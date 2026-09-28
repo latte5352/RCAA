@@ -428,7 +428,7 @@ export function checkReviewReportVersionRule(record, nameIndex) {
  * (1=OK, 2=NG, null=대상 아님)과 comment(간결한 사유, codebeamer 전송용),
  * detailComment(상세 사유 배열)를 채워 넣는다.
  *
- * @returns {{records, versionCheckFailures: Array<{trackerName, reason, rawSnippet}>, incompleteFetchTrackers: string[], manualStatusCheckTrackers: string[], docHistoryManualCheckTrackers: Array<{trackerName, reason}>, noTrackerManualCheckTrackers: string[]}}
+ * @returns {{records, versionCheckFailures: Array<{trackerName, reason, targetPaItemId, reviewReportPaItemId}>, incompleteFetchTrackers: string[], manualStatusCheckTrackers: string[], docHistoryManualCheckTrackers: Array<{trackerName, reason}>, noTrackerManualCheckTrackers: string[]}}
  */
 export function runAudit(records, options = {}) {
   const {
@@ -535,7 +535,8 @@ export function runAudit(records, options = {}) {
           versionCheckFailures.push({
             trackerName: record.trackerName,
             reason: failReason,
-            rawSnippet: record.versionCheckRawSnippet || "",
+            targetPaItemId: record.paItemId || null,
+            reviewReportPaItemId: record.versionCheckPaItemId || null,
           });
         }
       } else {
