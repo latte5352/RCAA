@@ -21,12 +21,19 @@ const exportCheckpointBtn = document.getElementById("exportCheckpointBtn");
 const importCheckpointBtn = document.getElementById("importCheckpointBtn");
 const importCheckpointFile = document.getElementById("importCheckpointFile");
 const checkpointShareStatus = document.getElementById("checkpointShareStatus");
+const trackerPicker = document.getElementById("trackerPicker");
 const trackerSearchInput = document.getElementById("trackerSearchInput");
 const trackerListBox = document.getElementById("trackerListBox");
 const trackerBulkButtons = document.getElementById("trackerBulkButtons");
 const trackerSelectAllBtn = document.getElementById("trackerSelectAllBtn");
 const trackerSelectNoneBtn = document.getElementById("trackerSelectNoneBtn");
 const trackerSelectionSummary = document.getElementById("trackerSelectionSummary");
+const nameMismatchBlock = document.getElementById("nameMismatchBlock");
+const nameMismatchUnregisteredWrap = document.getElementById("nameMismatchUnregisteredWrap");
+const nameMismatchUnregisteredList = document.getElementById("nameMismatchUnregisteredList");
+const nameMismatchCilOnlyWrap = document.getElementById("nameMismatchCilOnlyWrap");
+const nameMismatchCilOnlyList = document.getElementById("nameMismatchCilOnlyList");
+const recheckNameMatchBtn = document.getElementById("recheckNameMatchBtn");
 // 주기적 활동 산출물 검사를 당분간 안 하기로 해서, 이 주기 선택 UI 참조도 같이 주석 처리
 // (popup.html의 관련 <select> 자체도 주석 처리돼 있음 - 필요해지면 같이 복구).
 // const cadenceSelect = document.getElementById("cadenceSelect");
@@ -51,6 +58,9 @@ let hasStoredTrackerSelection = false; // 이 프로젝트에 대해 세션 중 
 // 판단이 allTrackerNames.length>0에 기대고 있어서 "선택 트래커만"이 아니라 "전체 감사"로
 // 조용히 돌아버린다(트래커 선택을 해뒀어도 무시됨) - 그래서 이 플래그로 로딩 중엔 아예 막는다.
 let trackerNamesReady = false;
+// 트래커/Item List 이름 불일치(둘 중 하나에만 있는 것)가 있으면 true - 이름을 맞춰서
+// 재확인하기 전까지는 감사 대상에서 조용히 빠지는 산출물이 생기므로, 감사 시작 자체를 막는다.
+let hasNameMismatch = false;
 
 const runConfirmOverlay = document.getElementById("runConfirmOverlay");
 const runConfirmYesBtn = document.getElementById("runConfirmYesBtn");
@@ -328,6 +338,7 @@ function resetTrackerPicker() {
   allTrackerNames = [];
   trackerNamesLoadedForProject = null;
   trackerNamesReady = false;
+  hasNameMismatch = false;
   runBtn.disabled = true;
   trackerSearchInput.value = "";
   trackerSearchInput.readOnly = false;
@@ -335,6 +346,8 @@ function resetTrackerPicker() {
   trackerListBox.innerHTML = "";
   trackerListBox.classList.add("hidden");
   trackerBulkButtons.classList.add("hidden");
+  trackerPicker.classList.remove("hidden");
+  nameMismatchBlock.classList.add("hidden");
 }
 
 async function persistSelectedTrackers() {
@@ -429,6 +442,15 @@ function renderTrackerOptions(filterText) {
   trackerListBox.classList.remove("hidden");
 }
 
+function renderMismatchList(container, items, getText) {
+  container.innerHTML = "";
+  for (const item of items) {
+    const row = document.createElement("div");
+    row.textContent = getText(item);
+    container.appendChild(row);
+  }
+}
+
 async function loadTrackerNamesForCurrentProject() {
   // 이 함수가 끝나기 전까지(성공/실패 어느 쪽이든) "새 감사 시작"을 막아둔다 - resetTrackerPicker가
   // 이미 호출 시점에 꺼뒀지만, 여기서도 끝까지 보장한다(위 trackerNamesReady 선언부 설명 참고).
@@ -442,9 +464,30 @@ async function loadTrackerNamesForCurrentProject() {
     trackerListBox.classList.remove("hidden");
     try {
       const client = createClient({ baseUrl: BASE_URL, baseUrlV3: BASE_URL_V3, ...credentials });
-      allTrackerNames = await listRegisteredTrackerNames(client, { projectName: selectedProjectName, trackerCil: TRACKER_NAME_CIL });
+      const { trackerNames, unregisteredTrackers, cilOnlyEntries } = await listRegisteredTrackerNames(
+        client, { projectName: selectedProjectName, trackerCil: TRACKER_NAME_CIL }
+      );
       trackerNamesLoadedForProject = selectedProjectName;
       trackerSearchInput.placeholder = "트래커 검색...";
+
+      // 트래커/Item List 이름이 하나라도 안 맞으면, 그 산출물은 감사도 반영도 안 되는 채로
+      // 조용히 빠지게 된다(runAudit이 아예 못 만들어짐) - codebeamer에서 이름을 맞추고 다시
+      // 확인하기 전까지는 감사 시작 자체를 막는다(트래커 선택 UI도 어차피 못 돌리니 숨긴다).
+      hasNameMismatch = unregisteredTrackers.length > 0 || cilOnlyEntries.length > 0;
+      if (hasNameMismatch) {
+        trackerPicker.classList.add("hidden");
+        trackerSelectionSummary.classList.add("hidden");
+        nameMismatchUnregisteredWrap.classList.toggle("hidden", unregisteredTrackers.length === 0);
+        renderMismatchList(nameMismatchUnregisteredList, unregisteredTrackers, (t) => t.trackerName);
+        nameMismatchCilOnlyWrap.classList.toggle("hidden", cilOnlyEntries.length === 0);
+        renderMismatchList(nameMismatchCilOnlyList, cilOnlyEntries, (t) => t.trackerName);
+        nameMismatchBlock.classList.remove("hidden");
+        return;
+      }
+
+      nameMismatchBlock.classList.add("hidden");
+      trackerPicker.classList.remove("hidden");
+      allTrackerNames = trackerNames;
 
       if (!hasStoredTrackerSelection) {
         // 이 프로젝트에서 한 번도 선택한 적 없으면 디폴트는 전체 체크
@@ -469,9 +512,13 @@ async function loadTrackerNamesForCurrentProject() {
     }
   } finally {
     trackerNamesReady = true;
-    runBtn.disabled = false;
+    runBtn.disabled = hasNameMismatch;
   }
 }
+
+recheckNameMatchBtn.addEventListener("click", () => {
+  loadTrackerNamesForCurrentProject();
+});
 
 trackerSearchInput.addEventListener("input", () => {
   renderTrackerOptions(trackerSearchInput.value);
@@ -629,6 +676,11 @@ runBtn.addEventListener("click", async () => {
     // allTrackerNames가 아직 비어있는 "로딩 중"과 "이 프로젝트는 트래커가 0개"를 구분 못 하면
     // 아래 isPartialSelection 판단이 깨져서 선택 범위를 무시하고 전체 감사로 돌아버린다.
     stepEl.textContent = "트래커 목록을 아직 불러오는 중입니다. 잠시 후 다시 시도해주세요.";
+    return;
+  }
+  if (hasNameMismatch) {
+    // runBtn이 disabled라 보통 여기까지 못 오지만, 방어적으로 한 번 더 막는다.
+    stepEl.textContent = "이름이 안 맞는 항목을 먼저 codebeamer에서 정리해주세요.";
     return;
   }
   if (allTrackerNames.length > 0 && selectedTrackerNames.size === 0) {

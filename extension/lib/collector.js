@@ -188,7 +188,17 @@ function mergeCilWithTrackers(cilRows, trackers, categories) {
       trackerUri: r.trackerUri,
     }));
 
-  return { registered, unregistered };
+  // CIL(Item List)엔 등재돼 있지만 트래커 URI를 못 채운 항목 - 대응하는 codebeamer 트래커를
+  // 이름으로 못 찾았다는 뜻이다(이름이 살짝 다르거나, 트래커 자체가 없거나). ITEM_LIST_ENTRIES_
+  // WITHOUT_TRACKER에 있는 이름(Source Code 등)은 원래 트래커가 없는 게 정상이라 제외한다.
+  // 이 목록은 예전엔 완전히 조용히 무시됐는데(registered에는 남아있지만 uri가 없어서
+  // processTrackerRow가 그냥 null을 반환해 결과에서 사라짐), 이제 side panel이 감사 시작 전에
+  // 이 목록으로 이름 불일치를 미리 잡아서 막는다(checkNameMatchIssues 참고).
+  const cilOnlyEntries = registered
+    .filter((r) => !r.trackerUri && matchConfiguredSuffix(stripBracketTag(r.trackerName), ITEM_LIST_ENTRIES_WITHOUT_TRACKER) === null)
+    .map((r) => ({ trackerName: r.trackerName, cilId: r.cilId }));
+
+  return { registered, unregistered, cilOnlyEntries };
 }
 
 // ── Review Report 연결 ───────────────────────────────────────────────────────
@@ -534,18 +544,24 @@ async function loadMergedTrackerRows(client, { projectName, trackerCil, onProgre
   });
   const cilRows = parseCilData(cilItemsResult.items);
 
-  const { registered, unregistered } = mergeCilWithTrackers(cilRows, allTrackers, allCategories);
+  const { registered, unregistered, cilOnlyEntries } = mergeCilWithTrackers(cilRows, allTrackers, allCategories);
 
-  return { userUri, allTrackers, registered, unregistered };
+  return { userUri, allTrackers, registered, unregistered, cilOnlyEntries };
 }
 
-/** side panel의 트래커 선택 목록용 - 프로젝트에 등재된 트래커 이름만 가볍게 가져온다. */
-/** @returns {Promise<Array<{name: string, processTag: string}>>} */
+/**
+ * side panel의 트래커 선택 목록용 - 프로젝트에 등재된 트래커 이름만 가볍게 가져온다(무거운
+ * per-tracker 조회 전이라 저렴함). 이름 불일치(트래커는 있는데 Item List엔 없음 / Item
+ * List엔 있는데 트래커를 못 찾음) 목록도 같이 반환한다 - 감사를 시작하기 전에 이걸로 먼저
+ * 막아야(popup.js) 이름이 안 맞아서 감사도 반영도 안 되는 산출물이 조용히 빠지는 걸 방지한다.
+ * @returns {Promise<{trackerNames: Array<{name: string, processTag: string}>, unregisteredTrackers: Array<{trackerName, trackerUri}>, cilOnlyEntries: Array<{trackerName, cilId}>}>}
+ */
 export async function listRegisteredTrackerNames(client, { projectName, trackerCil }) {
-  const { registered } = await loadMergedTrackerRows(client, { projectName, trackerCil });
-  return registered
+  const { registered, unregistered, cilOnlyEntries } = await loadMergedTrackerRows(client, { projectName, trackerCil });
+  const trackerNames = registered
     .map((r) => ({ name: r.trackerName, processTag: r.processTag || "" }))
     .sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  return { trackerNames, unregisteredTrackers: unregistered, cilOnlyEntries };
 }
 
 /**

@@ -40,6 +40,12 @@
   #checkpointShareRow { display: flex; gap: 6px; margin-bottom: 4px; }
   #checkpointShareRow button { width: auto; flex: 1; font-size: 12px; padding: 6px; }
   #checkpointShareStatus { font-size: 11px; color: #666; margin: 0 0 8px; line-height: 1.5; }
+  #nameMismatchBlock { background: #fdecea; border: 1px solid #e57373; color: #c0392b; border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; font-size: 12px; line-height: 1.6; }
+  #nameMismatchTitle { font-weight: 700; margin-bottom: 4px; }
+  #nameMismatchNote { color: #7a2d24; margin-bottom: 8px; }
+  .mismatch-group-title { font-weight: 600; margin: 6px 0 2px; }
+  #nameMismatchUnregisteredList, #nameMismatchCilOnlyList { color: #444; }
+  #nameMismatchBlock button { width: auto; margin-top: 4px; }
 
   #runConfirmOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 100; }
   #runConfirmBox { background: #fff; border-radius: 6px; padding: 16px; width: 84%; max-width: 300px; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
@@ -74,6 +80,19 @@
     </div>
     <input type="file" id="importCheckpointFile" accept="application/json,.json" class="hidden">
     <div id="checkpointShareStatus" class="hidden"></div>
+    <div id="nameMismatchBlock" class="hidden">
+      <div id="nameMismatchTitle">⚠ 이름이 안 맞는 항목이 있어 감사를 시작할 수 없습니다</div>
+      <div id="nameMismatchNote">codebeamer에서 아래 이름을 서로 맞춘 뒤 "다시 확인"을 눌러주세요.</div>
+      <div id="nameMismatchUnregisteredWrap" class="hidden">
+        <div class="mismatch-group-title">트래커는 있는데 Item List엔 없음</div>
+        <div id="nameMismatchUnregisteredList"></div>
+      </div>
+      <div id="nameMismatchCilOnlyWrap" class="hidden">
+        <div class="mismatch-group-title">Item List엔 있는데 트래커를 못 찾음</div>
+        <div id="nameMismatchCilOnlyList"></div>
+      </div>
+      <button id="recheckNameMatchBtn" type="button">다시 확인</button>
+    </div>
     <div id="trackerPicker">
       <input type="text" id="trackerSearchInput" placeholder="트래커 검색...">
       <div id="trackerBulkButtons" class="hidden">
