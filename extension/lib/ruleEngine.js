@@ -322,6 +322,20 @@ export function checkStatusRule(record) {
   const itemCount = record.itemCount || 0;
   if (itemCount === 0) return null; // 아직 아무것도 등록 안 됨 - 시작 전이라 검사 대상 아님
 
+  // 한 번이라도 승인된 적 있고, 그 이후 재작업 들어가서 아직 재버전 안 한 상태(PR 수정 등으로
+  // Open으로 되돌아왔지만 아직 버전업 전)면 상태 규칙도 검사하지 않는다 - 리뷰레포트는 이전
+  // 버전 기준으로 이미 업로드된 채 그대로 있는데 문서만 Open으로 돌아온 것뿐이라, uploadRaw와
+  // 상태가 안 맞아 보이는 게 당연하다(checkVersionRule/checkDocHistoryRule과 동일한 판단
+  // 기준). 한 번도 승인된 적 없는 문서(첫 리뷰 사이클 진행 중)는 이 예외 대상이 아니다 - 그런
+  // 문서에서 리뷰레포트 업로드 여부와 상태가 안 맞으면 여전히 실제 문제일 수 있어 그대로 검사한다.
+  if (record.hasEverBeenApproved) {
+    const lastEditIsoForRework = parseDatetimeIso(record.lastEdit);
+    const versioningIsoForRework = parseDatetimeIso(record.versioning);
+    if (lastEditIsoForRework && (!versioningIsoForRework || versioningIsoForRework < lastEditIsoForRework)) {
+      return null;
+    }
+  }
+
   const uploadRaw = record.reviewReportUploaded; // true | false | "해당없음"
   if (uploadRaw === "해당없음") {
     return { ok: true, reasons: [], detailReasons: [] };
