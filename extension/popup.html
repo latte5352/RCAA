@@ -41,11 +41,18 @@
   #checkpointShareRow button { width: auto; flex: 1; font-size: 12px; padding: 6px; }
   #checkpointShareStatus { font-size: 11px; color: #666; margin: 0 0 8px; line-height: 1.5; }
   #nameMismatchBlock { background: #fdecea; border: 1px solid #e57373; color: #c0392b; border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; font-size: 12px; line-height: 1.6; }
-  #nameMismatchTitle { font-weight: 700; margin-bottom: 4px; }
-  #nameMismatchNote { color: #7a2d24; margin-bottom: 8px; }
-  .mismatch-group-title { font-weight: 600; margin: 6px 0 2px; }
-  #nameMismatchUnregisteredList, #nameMismatchCilOnlyList { color: #444; }
-  #nameMismatchBlock button { width: auto; margin-top: 4px; }
+  #nameMismatchTitle { font-weight: 700; margin-bottom: 4px; font-size: 13px; }
+  #nameMismatchNote { color: #7a2d24; margin-bottom: 10px; }
+  .mismatch-group { margin-bottom: 10px; }
+  .mismatch-group-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px; }
+  .mismatch-group-title { font-weight: 700; color: #a5311f; }
+  .mismatch-group-count { font-weight: 400; opacity: .8; }
+  .mismatch-copy-btn { width: auto; padding: 3px 8px; font-size: 11px; background: #fff; border: 1px solid #e0a8a3; color: #a5311f; border-radius: 3px; }
+  .mismatch-list { background: #fff; border: 1px solid #f0c4bf; border-radius: 4px; max-height: 160px; overflow-y: auto; }
+  .mismatch-list-item { padding: 5px 8px; border-bottom: 1px solid #fbe4e2; color: #333; word-break: break-all; }
+  .mismatch-list-item:nth-child(even) { background: #fffafa; }
+  .mismatch-list-item:last-child { border-bottom: none; }
+  #recheckNameMatchBtn { width: 100%; margin-top: 4px; background: #c0392b; color: #fff; border: none; font-weight: 600; padding: 8px; }
 
   #runConfirmOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 100; }
   #runConfirmBox { background: #fff; border-radius: 6px; padding: 16px; width: 84%; max-width: 300px; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
@@ -83,13 +90,19 @@
     <div id="nameMismatchBlock" class="hidden">
       <div id="nameMismatchTitle">⚠ 이름이 안 맞는 항목이 있어 감사를 시작할 수 없습니다</div>
       <div id="nameMismatchNote">codebeamer에서 아래 이름을 서로 맞춘 뒤 "다시 확인"을 눌러주세요.</div>
-      <div id="nameMismatchUnregisteredWrap" class="hidden">
-        <div class="mismatch-group-title">트래커는 있는데 Item List엔 없음</div>
-        <div id="nameMismatchUnregisteredList"></div>
+      <div id="nameMismatchUnregisteredWrap" class="hidden mismatch-group">
+        <div class="mismatch-group-header">
+          <div class="mismatch-group-title">트래커는 있는데 Item List엔 없음 <span id="nameMismatchUnregisteredCount" class="mismatch-group-count"></span></div>
+          <button type="button" class="mismatch-copy-btn" data-copy-target="nameMismatchUnregisteredList">복사</button>
+        </div>
+        <div id="nameMismatchUnregisteredList" class="mismatch-list"></div>
       </div>
-      <div id="nameMismatchCilOnlyWrap" class="hidden">
-        <div class="mismatch-group-title">Item List엔 있는데 트래커를 못 찾음</div>
-        <div id="nameMismatchCilOnlyList"></div>
+      <div id="nameMismatchCilOnlyWrap" class="hidden mismatch-group">
+        <div class="mismatch-group-header">
+          <div class="mismatch-group-title">Item List엔 있는데 트래커를 못 찾음 <span id="nameMismatchCilOnlyCount" class="mismatch-group-count"></span></div>
+          <button type="button" class="mismatch-copy-btn" data-copy-target="nameMismatchCilOnlyList">복사</button>
+        </div>
+        <div id="nameMismatchCilOnlyList" class="mismatch-list"></div>
       </div>
       <button id="recheckNameMatchBtn" type="button">다시 확인</button>
     </div>

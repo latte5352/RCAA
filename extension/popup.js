@@ -31,8 +31,10 @@ const trackerSelectionSummary = document.getElementById("trackerSelectionSummary
 const nameMismatchBlock = document.getElementById("nameMismatchBlock");
 const nameMismatchUnregisteredWrap = document.getElementById("nameMismatchUnregisteredWrap");
 const nameMismatchUnregisteredList = document.getElementById("nameMismatchUnregisteredList");
+const nameMismatchUnregisteredCount = document.getElementById("nameMismatchUnregisteredCount");
 const nameMismatchCilOnlyWrap = document.getElementById("nameMismatchCilOnlyWrap");
 const nameMismatchCilOnlyList = document.getElementById("nameMismatchCilOnlyList");
+const nameMismatchCilOnlyCount = document.getElementById("nameMismatchCilOnlyCount");
 const recheckNameMatchBtn = document.getElementById("recheckNameMatchBtn");
 // 주기적 활동 산출물 검사를 당분간 안 하기로 해서, 이 주기 선택 UI 참조도 같이 주석 처리
 // (popup.html의 관련 <select> 자체도 주석 처리돼 있음 - 필요해지면 같이 복구).
@@ -442,14 +444,38 @@ function renderTrackerOptions(filterText) {
   trackerListBox.classList.remove("hidden");
 }
 
-function renderMismatchList(container, items, getText) {
+// 이름 순 정렬 + 개수 표시 + 한 줄씩 구분되는 카드형 리스트로 렌더링한다(그냥 죽 늘어놓으면
+// 트래커가 10개, 20개씩 나올 때 알아보기 힘들어서). 각 줄은 나중에 "복사" 버튼이 그대로
+// 텍스트로 긁어갈 수 있게 .mismatch-list-item 클래스를 붙인다.
+function renderMismatchList(container, countEl, items, getText) {
+  const names = items.map(getText).sort((a, b) => a.localeCompare(b, "ko"));
+  countEl.textContent = `${names.length}개`;
   container.innerHTML = "";
-  for (const item of items) {
+  for (const name of names) {
     const row = document.createElement("div");
-    row.textContent = getText(item);
+    row.className = "mismatch-list-item";
+    row.textContent = name;
     container.appendChild(row);
   }
 }
+
+// 그룹 제목 옆 "복사" 버튼 - 다른 사람에게 넘기는 게 아니라, 본인이 직접 codebeamer 가서
+// 트래커를 만들거나 Item List 이름을 고칠 때 하나씩 보면서 처리하기 편하게 목록을 줄바꿈으로
+// 이어붙여 클립보드에 복사해둔다.
+nameMismatchBlock.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".mismatch-copy-btn");
+  if (!btn) return;
+  const container = document.getElementById(btn.dataset.copyTarget);
+  const text = Array.from(container.querySelectorAll(".mismatch-list-item")).map((el) => el.textContent).join("\n");
+  const original = btn.textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = "복사됨!";
+  } catch (e2) {
+    btn.textContent = "복사 실패";
+  }
+  setTimeout(() => { btn.textContent = original; }, 1200);
+});
 
 async function loadTrackerNamesForCurrentProject() {
   // 이 함수가 끝나기 전까지(성공/실패 어느 쪽이든) "새 감사 시작"을 막아둔다 - resetTrackerPicker가
@@ -478,9 +504,9 @@ async function loadTrackerNamesForCurrentProject() {
         trackerPicker.classList.add("hidden");
         trackerSelectionSummary.classList.add("hidden");
         nameMismatchUnregisteredWrap.classList.toggle("hidden", unregisteredTrackers.length === 0);
-        renderMismatchList(nameMismatchUnregisteredList, unregisteredTrackers, (t) => t.trackerName);
+        renderMismatchList(nameMismatchUnregisteredList, nameMismatchUnregisteredCount, unregisteredTrackers, (t) => t.trackerName);
         nameMismatchCilOnlyWrap.classList.toggle("hidden", cilOnlyEntries.length === 0);
-        renderMismatchList(nameMismatchCilOnlyList, cilOnlyEntries, (t) => t.trackerName);
+        renderMismatchList(nameMismatchCilOnlyList, nameMismatchCilOnlyCount, cilOnlyEntries, (t) => t.trackerName);
         nameMismatchBlock.classList.remove("hidden");
         return;
       }

@@ -194,8 +194,11 @@ function mergeCilWithTrackers(cilRows, trackers, categories) {
   // 이 목록은 예전엔 완전히 조용히 무시됐는데(registered에는 남아있지만 uri가 없어서
   // processTrackerRow가 그냥 null을 반환해 결과에서 사라짐), 이제 side panel이 감사 시작 전에
   // 이 목록으로 이름 불일치를 미리 잡아서 막는다(checkNameMatchIssues 참고).
+  // Source Code처럼 하드웨어/소프트웨어 구성별로 "(BSP)(MCU)", "(APP)(AP)" 같은 괄호 한정자가
+  // 뒤에 붙는 경우가 있어서, 매칭 전에 그 한정자부터 뗀다 - 안 그러면 "Source Code (BSP)(MCU)"가
+  // "Source Code"로 안 끝나는 걸로 보여 정상 항목까지 이름 불일치로 잘못 잡힌다.
   const cilOnlyEntries = registered
-    .filter((r) => !r.trackerUri && matchConfiguredSuffix(stripBracketTag(r.trackerName), ITEM_LIST_ENTRIES_WITHOUT_TRACKER) === null)
+    .filter((r) => !r.trackerUri && matchConfiguredSuffix(stripTrailingQualifier(stripBracketTag(r.trackerName)), ITEM_LIST_ENTRIES_WITHOUT_TRACKER) === null)
     .map((r) => ({ trackerName: r.trackerName, cilId: r.cilId }));
 
   return { registered, unregistered, cilOnlyEntries };
