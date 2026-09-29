@@ -37,14 +37,19 @@
   .warn[open] summary { margin-bottom: 8px; }
   .warn .warn-count { font-weight: 400; opacity: .75; margin-left: 2px; }
   .warn .row { padding: 4px 0; }
-  #unregisteredWrap { background: #fdecea; border: 1px solid #e57373; color: #c0392b; }
   #newTrackersWrap { background: #e8f4fd; border: 1px solid #90caf9; color: #1565c0; }
   #changedTrackersWrap { background: #fff8e1; border: 1px solid #f0c14b; color: #b8860b; }
   #versionFailWrap { background: #fdf0e6; border: 1px solid #e8a05a; color: #a85c1a; }
   #manualStatusCheckWrap { background: #f1e8fd; border: 1px solid #b39ddb; color: #5e35b1; }
   #docHistoryManualCheckWrap { background: #e6f4ea; border: 1px solid #81c784; color: #2e7d32; }
   #noTrackerManualCheckWrap { background: #e3f2fd; border: 1px solid #64b5f6; color: #1565c0; }
+  #unregisteredReferenceFilesWrap { background: #fff3e0; border: 1px solid #ffb74d; color: #e65100; }
   #incompleteFetchWrap { background: #fdecea; border: 1px solid #e57373; color: #c0392b; }
+  #incompleteFetchWrap #retryIncompleteFetchBtn { margin-top: 8px; background: #c0392b; border-color: #c0392b; color: #fff; font-weight: 600; }
+  #incompleteFetchWrap #retryIncompleteFetchBtn:hover { background: #a5311f; }
+  #fetchFailedWrap { background: #fdecea; border: 1px solid #c0392b; color: #c0392b; }
+  #fetchFailedWrap #retryFetchFailedBtn { margin-top: 8px; background: #c0392b; border-color: #c0392b; color: #fff; font-weight: 600; }
+  #fetchFailedWrap #retryFetchFailedBtn:hover { background: #a5311f; }
   #cmRoleBlockWrap { margin-bottom: 14px; padding: 14px 18px; border-radius: 4px; font-size: 14px; line-height: 1.6; background: #2d2d2d; border: 1px solid #c0392b; color: #fff; }
   #cmRoleBlockWrap h2 { font-size: 14px; margin: 0 0 8px; color: #ff8a80; }
   .change-detail, .version-fail-reason { color: #666; font-weight: normal; }
@@ -129,10 +134,6 @@
       <div id="cmRoleBlockMessage"></div>
     </div>
 
-    <details id="unregisteredWrap" class="warn hidden">
-      <summary>⚠ Item List 미등재 산출물 <span class="warn-count"></span></summary>
-      <div id="unregisteredList"></div>
-    </details>
     <details id="newTrackersWrap" class="warn hidden">
       <summary>🆕 지난 감사 대비 새로 등재된 산출물 <span class="warn-count"></span></summary>
       <div id="newTrackersList"></div>
@@ -157,9 +158,19 @@
       <summary>📂 codebeamer 밖 산출물 - 저장/버전/이력 직접 확인 필요 <span class="warn-count"></span></summary>
       <div id="noTrackerManualCheckList"></div>
     </details>
-    <details id="incompleteFetchWrap" class="warn hidden">
-      <summary>⚠ 데이터 조회 불완전 (결과 신뢰 불가 - 재감사 권장) <span class="warn-count"></span></summary>
+    <details id="unregisteredReferenceFilesWrap" class="warn hidden">
+      <summary>📎 Reference 파일 미등재 - CIL/Reference Document List에 등록 필요 <span class="warn-count"></span></summary>
+      <div id="unregisteredReferenceFilesList"></div>
+    </details>
+    <details id="incompleteFetchWrap" class="warn hidden" open>
+      <summary>⚠ 데이터 조회 불완전 (결과 신뢰 불가) <span class="warn-count"></span></summary>
       <div id="incompleteFetchList"></div>
+      <button id="retryIncompleteFetchBtn" type="button">이 트래커들만 재시도</button>
+    </details>
+    <details id="fetchFailedWrap" class="warn hidden" open>
+      <summary>❌ 트래커 조회 실패 (네트워크 오류) <span class="warn-count"></span></summary>
+      <div id="fetchFailedList"></div>
+      <button id="retryFetchFailedBtn" type="button">이 트래커들만 재시도</button>
     </details>
 
     <div class="toolbar hidden" id="toolbarRow">

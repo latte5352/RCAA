@@ -31,8 +31,6 @@ const progressLog = document.getElementById("progressLog");
 const reviewNotice = document.getElementById("reviewNotice");
 const cmRoleBlockWrap = document.getElementById("cmRoleBlockWrap");
 const cmRoleBlockMessage = document.getElementById("cmRoleBlockMessage");
-const unregisteredWrap = document.getElementById("unregisteredWrap");
-const unregisteredList = document.getElementById("unregisteredList");
 const newTrackersWrap = document.getElementById("newTrackersWrap");
 const newTrackersList = document.getElementById("newTrackersList");
 const changedTrackersWrap = document.getElementById("changedTrackersWrap");
@@ -45,8 +43,14 @@ const docHistoryManualCheckWrap = document.getElementById("docHistoryManualCheck
 const docHistoryManualCheckList = document.getElementById("docHistoryManualCheckList");
 const noTrackerManualCheckWrap = document.getElementById("noTrackerManualCheckWrap");
 const noTrackerManualCheckList = document.getElementById("noTrackerManualCheckList");
+const unregisteredReferenceFilesWrap = document.getElementById("unregisteredReferenceFilesWrap");
+const unregisteredReferenceFilesList = document.getElementById("unregisteredReferenceFilesList");
 const incompleteFetchWrap = document.getElementById("incompleteFetchWrap");
 const incompleteFetchList = document.getElementById("incompleteFetchList");
+const retryIncompleteFetchBtn = document.getElementById("retryIncompleteFetchBtn");
+const fetchFailedWrap = document.getElementById("fetchFailedWrap");
+const fetchFailedList = document.getElementById("fetchFailedList");
+const retryFetchFailedBtn = document.getElementById("retryFetchFailedBtn");
 const toolbarRow = document.getElementById("toolbarRow");
 const legend = document.getElementById("legend");
 const searchInput = document.getElementById("searchInput");
@@ -67,7 +71,6 @@ const statusEl = document.getElementById("status");
 
 let auditRecords = [];
 let warningsData = {
-  unregisteredTrackers: [],
   newTrackers: [],
   changedTrackers: [],
   versionCheckFailures: [],
@@ -75,6 +78,7 @@ let warningsData = {
   manualStatusCheckTrackers: [],
   docHistoryManualCheckTrackers: [],
   noTrackerManualCheckTrackers: [],
+  fetchFailedTrackers: [],
 };
 let reviewStatus = "pending"; // "pending" | "applied"
 let currentProjectId = null;
@@ -191,7 +195,23 @@ function getManualCheckFlags(record) {
     flags.push({ rule: "versionRule", label: "버전", reason });
     flags.push({ rule: "docHistoryRule", label: "이력", reason });
   }
-  return flags;
+  // 조회가 아예 실패했거나(fetchFailedTrackers - 데이터가 하나도 없음) 조회가 불완전했던
+  // (incompleteFetchTrackers - 일부만 있어서 자동 판정을 못 믿음) 트래커는 4개 규칙 전부
+  // 강제한다. 체크박스로 이 트래커를 반영 대상에서 빼면(재시도로 나중에 따로 해결하기로
+  // 하면) 다른 강제 항목과 마찬가지로 이번엔 입력 안 해도 된다(validateManualInputs 참고).
+  if ((warningsData.fetchFailedTrackers || []).includes(record.trackerName)) {
+    const reason = "네트워크 오류로 조회하지 못해 자동 판정 불가능 - 직접 확인 후 판정 필요";
+    for (const rule of ALL_RULE_KEYS) flags.push({ rule, label: RULE_LABELS[rule], reason });
+  }
+  if ((warningsData.incompleteFetchTrackers || []).includes(record.trackerName)) {
+    const reason = "데이터 조회가 불완전해 자동 판정을 신뢰할 수 없음 - 직접 확인 후 판정 필요";
+    for (const rule of ALL_RULE_KEYS) flags.push({ rule, label: RULE_LABELS[rule], reason });
+  }
+
+  // 같은 규칙이 여러 조건에 동시에 걸려 중복으로 쌓일 수 있어서(예: 상태 규칙 자동 판정 불가
+  // 대상이면서 동시에 조회도 불완전한 경우), 규칙별로 하나만 남긴다(먼저 쌓인 것 유지).
+  const seenRules = new Set();
+  return flags.filter((f) => (seenRules.has(f.rule) ? false : (seenRules.add(f.rule), true)));
 }
 
 // isRequired=true: "선택해주세요"부터 시작(안 고르면 반영 차단). isRequired=false: 기본값이
@@ -320,7 +340,15 @@ function renderItemsTable(records, excludedCilIds = new Set()) {
     const checkCell = document.createElement("td");
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
-    checkbox.checked = !excludedCilIds.has(record.cilId);
+    if (record.cilId == null) {
+      // Reference 계열 파일 중 CIL/RDL에 등재가 안 된 것 - 반영할 codebeamer 항목 자체가
+      // 없으니 체크박스를 꺼서 반영 대상이 아님을 보여준다(pushAllResults도 별도로 막음).
+      checkbox.checked = false;
+      checkbox.disabled = true;
+      checkbox.title = "CIL/Reference Document List에 등재되지 않아 반영 대상이 아닙니다";
+    } else {
+      checkbox.checked = !excludedCilIds.has(record.cilId);
+    }
     checkbox.dataset.cilId = record.cilId;
     checkCell.appendChild(checkbox);
     row.appendChild(checkCell);
@@ -537,7 +565,6 @@ function simpleRow(text) {
 
 function renderWarnings(data) {
   const {
-    unregisteredTrackers = [],
     newTrackers = [],
     changedTrackers = [],
     versionCheckFailures = [],
@@ -545,12 +572,10 @@ function renderWarnings(data) {
     manualStatusCheckTrackers = [],
     docHistoryManualCheckTrackers = [],
     noTrackerManualCheckTrackers = [],
+    fetchFailedTrackers = [],
+    unregisteredReferenceFiles = [],
   } = data;
 
-  if (unregisteredTrackers.length) {
-    renderWarnList(unregisteredList, unregisteredTrackers, (t) => simpleRow(t.trackerName));
-    unregisteredWrap.classList.remove("hidden");
-  }
   if (newTrackers.length) {
     renderWarnList(newTrackersList, newTrackers, (name) => simpleRow(name));
     newTrackersWrap.classList.remove("hidden");
@@ -629,6 +654,18 @@ function renderWarnings(data) {
       reason.className = "version-fail-reason";
       reason.textContent = f.reason;
       row.appendChild(reason);
+      if (f.paItemId) {
+        const link = document.createElement("a");
+        link.className = "version-fail-link";
+        link.href = `https://codebeamer.slworld.com/cb/issue/${f.paItemId}`;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "🔗 대상 산출물에서 직접 확인";
+        const linksRow = document.createElement("div");
+        linksRow.className = "version-fail-links";
+        linksRow.appendChild(link);
+        row.appendChild(linksRow);
+      }
       return row;
     });
     docHistoryManualCheckWrap.classList.remove("hidden");
@@ -637,9 +674,23 @@ function renderWarnings(data) {
     renderWarnList(noTrackerManualCheckList, noTrackerManualCheckTrackers, (name) => simpleRow(name));
     noTrackerManualCheckWrap.classList.remove("hidden");
   }
+  if (unregisteredReferenceFiles.length) {
+    renderWarnList(unregisteredReferenceFilesList, unregisteredReferenceFiles, (name) => simpleRow(name));
+    unregisteredReferenceFilesWrap.classList.remove("hidden");
+  }
+  // 이 둘은 재시도 버튼으로 다시 그려질 수 있어서(성공하면 줄어듦), 비어있으면 다시 숨긴다 -
+  // 다른 목록들은 한 감사 실행 안에서 줄어들 일이 없어서 else 분기가 없다.
   if (incompleteFetchTrackers.length) {
     renderWarnList(incompleteFetchList, incompleteFetchTrackers, (name) => simpleRow(name));
     incompleteFetchWrap.classList.remove("hidden");
+  } else {
+    incompleteFetchWrap.classList.add("hidden");
+  }
+  if (fetchFailedTrackers.length) {
+    renderWarnList(fetchFailedList, fetchFailedTrackers, (name) => simpleRow(name));
+    fetchFailedWrap.classList.remove("hidden");
+  } else {
+    fetchFailedWrap.classList.add("hidden");
   }
 }
 
@@ -805,6 +856,91 @@ async function applyCmRoleGate(client, projectId, username) {
   }
 }
 
+// 조회 실패했거나(fetchFailedTrackers) 불완전했던(incompleteFetchTrackers) 트래커들만
+// 다시 조회해서(collectAuditData의 onlyTrackerNames로 범위를 좁힘) 결과에 반영한다 - 전체
+// 재감사 없이 그 트래커들만 다시 시도. 규칙 검사(runAudit)는 합쳐진 전체 레코드로 다시
+// 돌린다 - 네트워크 호출 없는 순수 로컬 계산이라 가볍고, Test Result/Report 같은 짝 트래커
+// 대조가 다른 레코드까지 봐야 정확하기 때문이다.
+// replaceExisting: 조회 실패는 애초에 레코드가 아예 없어서(mapWithConcurrency가 null 반환)
+// 그냥 추가만 하면 되지만, 조회 불완전은 이미 (불완전한 데이터로 만들어진) 레코드가 있으므로
+// 그 트래커분만 새로 받은 걸로 갈아끼워야 한다.
+async function retryTrackers(namesToRetry, { replaceExisting, button, idleLabel }) {
+  if (namesToRetry.length === 0) return;
+
+  const { credentials } = await chrome.storage.session.get("credentials");
+  if (!credentials) {
+    statusEl.textContent = "로그인이 만료되었습니다. side panel에서 다시 로그인해주세요.";
+    return;
+  }
+  const client = createClient({ baseUrl: BASE_URL, baseUrlV3: BASE_URL_V3, ...credentials });
+
+  button.disabled = true;
+  button.textContent = "재시도 중...";
+  try {
+    const previousSnapshot = await loadHistorySnapshot(projectName);
+    const docHistoryCheckpoints = {};
+    const docHistoryCheckpointsById = {};
+    for (const [name, entry] of Object.entries(previousSnapshot)) {
+      docHistoryCheckpoints[name] = entry.docHistoryCheckedVersion;
+      if (entry.trackerId) docHistoryCheckpointsById[entry.trackerId] = entry.docHistoryCheckedVersion;
+    }
+
+    const { records: retriedRecords, fetchFailedTrackers: stillFailed } = await collectAuditData(client, {
+      projectName, trackerCil, trackerNcl, onlyTrackerNames: namesToRetry, onProgress: handleCollectionProgress,
+      docHistoryCheckpoints, docHistoryCheckpointsById, includeReferenceFiles: false,
+    });
+
+    auditRecords = replaceExisting
+      ? [...auditRecords.filter((r) => !namesToRetry.includes(r.trackerName)), ...retriedRecords]
+      : [...auditRecords, ...retriedRecords];
+
+    const {
+      records: auditedRecords, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers,
+      docHistoryManualCheckTrackers, noTrackerManualCheckTrackers,
+    } = runAudit(auditRecords, { cadence, anchor, periodicTrackers: PERIODIC_TRACKERS });
+    auditRecords = auditedRecords;
+
+    const { newTrackers, changedTrackers } = await diffAndUpdateHistory(projectName, retriedRecords);
+
+    const excludedCilIds = getExcludedCilIds();
+    warningsData = {
+      ...warningsData,
+      newTrackers: [...(warningsData.newTrackers || []), ...newTrackers],
+      changedTrackers: [...(warningsData.changedTrackers || []), ...changedTrackers],
+      versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers,
+      docHistoryManualCheckTrackers, noTrackerManualCheckTrackers,
+      fetchFailedTrackers: stillFailed,
+    };
+
+    renderWarnings(warningsData);
+    renderItemsTable(auditRecords, excludedCilIds);
+    await persistReviewState(reviewStatus);
+
+    // 재시도했던 트래커 중, 이번에도 완전히 실패했거나(stillFailed) 여전히 불완전한
+    // 상태(incompleteFetchTrackers - 방금 전체 레코드 기준으로 새로 계산된 값)로 남아있는
+    // 것만 "여전히 문제있음"으로 센다.
+    const stillProblematic = namesToRetry.filter(
+      (n) => stillFailed.includes(n) || incompleteFetchTrackers.includes(n)
+    );
+    statusEl.textContent = stillProblematic.length > 0
+      ? `재시도 완료: ${namesToRetry.length - stillProblematic.length}건 성공, ${stillProblematic.length}건 여전히 문제가 있습니다.`
+      : `재시도 완료: ${namesToRetry.length}건 모두 정상적으로 조회했습니다.`;
+  } catch (e) {
+    statusEl.textContent = `재시도 중 오류: ${e.message}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = idleLabel;
+  }
+}
+retryFetchFailedBtn.addEventListener("click", () => retryTrackers(
+  [...(warningsData.fetchFailedTrackers || [])],
+  { replaceExisting: false, button: retryFetchFailedBtn, idleLabel: "이 트래커들만 재시도" }
+));
+retryIncompleteFetchBtn.addEventListener("click", () => retryTrackers(
+  [...(warningsData.incompleteFetchTrackers || [])],
+  { replaceExisting: true, button: retryIncompleteFetchBtn, idleLabel: "이 트래커들만 재시도" }
+));
+
 async function runNewAudit(client, username) {
   const scopeText = onlyTrackerNames && onlyTrackerNames.length
     ? `선택한 트래커 ${onlyTrackerNames.length}개만`
@@ -822,7 +958,7 @@ async function runNewAudit(client, username) {
     docHistoryCheckpoints[name] = entry.docHistoryCheckedVersion;
     if (entry.trackerId) docHistoryCheckpointsById[entry.trackerId] = entry.docHistoryCheckedVersion;
   }
-  const { records, unregisteredTrackers, projectId } = await collectAuditData(client, {
+  const { records, projectId, fetchFailedTrackers } = await collectAuditData(client, {
     projectName, trackerCil, trackerNcl, onlyTrackerNames, onProgress: handleCollectionProgress,
     docHistoryCheckpoints, docHistoryCheckpointsById,
   });
@@ -832,7 +968,7 @@ async function runNewAudit(client, username) {
   setProgress(60, "감사 규칙 검사 중...");
   const {
     records: auditedRecords, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers, docHistoryManualCheckTrackers,
-    noTrackerManualCheckTrackers,
+    noTrackerManualCheckTrackers, unregisteredReferenceFiles,
   } = runAudit(records, {
     cadence, anchor, periodicTrackers: PERIODIC_TRACKERS,
   });
@@ -842,8 +978,9 @@ async function runNewAudit(client, username) {
   const { newTrackers, changedTrackers } = await diffAndUpdateHistory(projectName, auditedRecords);
 
   warningsData = {
-    unregisteredTrackers, newTrackers, changedTrackers, versionCheckFailures, incompleteFetchTrackers,
-    manualStatusCheckTrackers, docHistoryManualCheckTrackers, noTrackerManualCheckTrackers,
+    newTrackers, changedTrackers, versionCheckFailures, incompleteFetchTrackers,
+    manualStatusCheckTrackers, docHistoryManualCheckTrackers, noTrackerManualCheckTrackers, fetchFailedTrackers,
+    unregisteredReferenceFiles,
   };
 
   setProgress(100, "검토 대기 중 (codebeamer에는 아직 반영 안 됨)");

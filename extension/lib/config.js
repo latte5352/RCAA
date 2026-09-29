@@ -7,12 +7,17 @@ export const PROJ_BASE_URL = "https://codebeamer.slworld.com/cb/proj";
 export const CM_ROLE_NAME = "CM";
 export const TRACKER_NAME_CIL = "[SUP.8]Configuration Item List";
 export const TRACKER_NAME_NCL = "[SUP.9]Non-Conformance List";
+// CIL과 별개로, 일부 프로젝트는 차종 코드 등 정해진 이름 형식이 없는 참고 문서(예: CAN DATA,
+// 차량 일반 요구사항 등)를 CIL 대신 이 트래커에 등재한다. 프로젝트에 이 트래커가 없으면 그냥
+// 없는 것으로 취급한다(CIL과 달리 필수가 아님).
+export const TRACKER_NAME_REFERENCE_DOC_LIST = "[SUP.8]Reference Document List";
 
 // 트래커 자체는 프로젝트에 존재하지만, 원래 Item List(CIL)에 등재되는 대상이 아닌 트래커들.
 // "Item List 미등재 산출물" 경고에 이 이름들은 올리지 않는다 - 즉 이 트래커들은 애초에
 // 형상감사(Item List 등재 여부 포함) 대상이 아니다.
 // (Review Report/Audit Report는 보조 트래커라도 Item List에 등재돼 있어야 하는 게 맞다고
-// 확인됨 - 여기 넣지 않는다. Configuration Item List는 CIL 트래커 자기 자신이라 예외.)
+// 확인됨 - 여기 넣지 않는다. Configuration Item List/Reference Document List는 그 자체가
+// 등재 대상 목록이라 예외.)
 // 앞에 차종 코드가 붙어도(예: "NQ6 Change Order") 매칭되도록 접미사 기준으로 비교한다
 // (matchConfiguredSuffix).
 export const TRACKERS_EXEMPT_FROM_ITEM_LIST = [
@@ -21,6 +26,7 @@ export const TRACKERS_EXEMPT_FROM_ITEM_LIST = [
   "Change Request",
   "Urgent Issue",
   "Configuration Item List",
+  "Reference Document List",
 ];
 
 // 일부 트래커 워크플로우가 표준 영어 상태명 대신 다른 이름(예: 한글 "승인됨")을 쓰는 경우의

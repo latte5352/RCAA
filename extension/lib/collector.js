@@ -5,7 +5,7 @@
 import { mapWithConcurrency } from "./codebeamerClient.js";
 import { parseBaselineData, buildLatestBaselines, buildAllBaselinesByTracker } from "./baselines.js";
 import { extractTargetVersionFromComment, isDateBasedTracker, stripTrailingQualifier, normalizeNameForRowMatch, extractProcessTag, matchConfiguredSuffix, toYYMMDD } from "./wikiTable.js";
-import { TRACKERS_EXEMPT_FROM_ITEM_LIST, ITEM_LIST_ENTRIES_WITHOUT_TRACKER, ITEM_LIST_ENTRIES_EXCLUDED_FROM_AUDIT, STATUS_NAME_ALIASES, REVIEW_REPORT_ADDITIONAL_TARGETS } from "./config.js";
+import { TRACKERS_EXEMPT_FROM_ITEM_LIST, ITEM_LIST_ENTRIES_WITHOUT_TRACKER, ITEM_LIST_ENTRIES_EXCLUDED_FROM_AUDIT, STATUS_NAME_ALIASES, REVIEW_REPORT_ADDITIONAL_TARGETS, TRACKER_NAME_REFERENCE_DOC_LIST } from "./config.js";
 
 // codebeamer에서 읽어온 상태명이 표준 영어명이 아닌 다른 이름(예: 한글 "승인됨")이면
 // 규칙 엔진이 인식하는 영어명으로 바꾼다 (STATUS_NAME_ALIASES 참고).
@@ -102,6 +102,11 @@ function parseCilData(items) {
       trackerName: item.name,
       trackerConnected,
       trackerUri,
+      // workItem이 가리키는 개별 아이템(파일) 자체의 uri - Reference 계열 트래커는 트래커
+      // 단위가 아니라 파일 단위로 등재되고, 등재 시점의 파일명이 그대로 붙어서 이후 버전이
+      // 올라가도 안 바뀌므로(collectReferenceFileRecords 참고), 트래커 이름/uri가 아니라
+      // 이 값으로 등재된 실제 파일을 정확히 찾아야 한다.
+      workItemUri: workItem ? workItem.uri || "" : "",
       prIdList: prItems.map((p) => p.name),
       status: (item.status || {}).name,
     };
@@ -139,9 +144,17 @@ function normalizeJoinName(name) {
 
 function mergeCilWithTrackers(cilRows, trackers, categories) {
   const tagged = [];
+  // 대괄호 태그 없는 트래커(Reference 계열 - collectReferenceFileRecords가 파일 단위로 따로
+  // 처리)의 uri를 모아둔다. CIL/RDL 항목의 workItem이 이런 트래커 안의 파일 하나를 직접
+  // 가리키면(parseCilData가 채운 trackerUri), 그 항목 자체의 trackerName은 트래커명이 아니라
+  // 등재 시점 파일명이라 표준 4규칙 감사에 트래커인 것처럼 섞여 들어가면 안 되므로, 아래에서
+  // registered/unregistered 양쪽 다 제외한다.
+  const untaggedTrackerUris = new Set();
   for (const item of [...trackers, ...categories]) {
     if (BRACKET_TAG_RE.test(item.name || "")) {
       tagged.push({ name: stripBracketTag(item.name), uri: item.uri, processTag: extractProcessTag(item.name) });
+    } else if (item.uri) {
+      untaggedTrackerUris.add(item.uri);
     }
   }
 
@@ -163,7 +176,7 @@ function mergeCilWithTrackers(cilRows, trackers, categories) {
     }
   }
 
-  const all = [...mergedByName.values()];
+  const all = [...mergedByName.values()].filter((r) => !untaggedTrackerUris.has(r.trackerUri));
   const registeredRaw = all.filter((r) => r.cilId != null);
   const unregisteredRaw = all.filter((r) => r.cilId == null);
 
@@ -545,11 +558,23 @@ async function loadMergedTrackerRows(client, { projectName, trackerCil, onProgre
   const cilItemsResult = await client.fetchAllItems(`${client.baseUrl}${cilTracker.uri}/items`, {
     onPage: (page, itemCount) => onProgress?.({ phase: `Configuration Item List 조회 중... (${itemCount}건)` }),
   });
-  const cilRows = parseCilData(cilItemsResult.items);
+  let cilRows = parseCilData(cilItemsResult.items);
+
+  // Reference Document List: CIL과 별개로 참고 문서를 등재하는 프로젝트가 있어서, 있으면
+  // CIL 목록과 합쳐서 같이 등재 여부 매칭에 쓴다. 없는 프로젝트도 많아서 CIL과 달리 없어도
+  // 에러 내지 않는다.
+  const refDocTracker = allTrackers.find((t) => t.name === TRACKER_NAME_REFERENCE_DOC_LIST);
+  if (refDocTracker) {
+    onProgress?.({ phase: "Reference Document List 조회 중..." });
+    const refDocItemsResult = await client.fetchAllItems(`${client.baseUrl}${refDocTracker.uri}/items`, {
+      onPage: (page, itemCount) => onProgress?.({ phase: `Reference Document List 조회 중... (${itemCount}건)` }),
+    });
+    cilRows = [...cilRows, ...parseCilData(refDocItemsResult.items)];
+  }
 
   const { registered, unregistered, cilOnlyEntries } = mergeCilWithTrackers(cilRows, allTrackers, allCategories);
 
-  return { userUri, allTrackers, registered, unregistered, cilOnlyEntries };
+  return { userUri, allTrackers, allCategories, cilRows, registered, unregistered, cilOnlyEntries };
 }
 
 /**
@@ -567,6 +592,46 @@ export async function listRegisteredTrackerNames(client, { projectName, trackerC
   return { trackerNames, unregisteredTrackers: unregistered, cilOnlyEntries };
 }
 
+// Reference 계열(대괄호 태그 없는) 트래커/카테고리 - 차종 코드 등 정해진 이름 형식이 없는
+// 참고 문서라 CIL 등재도 트래커 단위가 아니라 그 안의 파일(아이템) 단위로 이뤄진다(등재 시점
+// 파일명이 이후 버전이 올라가도 안 바뀌어서 트래커명과도 어긋남 - workItemUri로 매칭하는 이유).
+// 그래서 표준 4규칙 감사(processTrackerRow)를 태우지 않고, 파일마다 CIL/Reference Document
+// List에 연결된 항목이 있는지만 따로 확인한다 - 결과는 runAudit이 저장 규칙 하나로만 판정하고
+// 나머지 3규칙은 N/A로 둔다(getManualCheckFlags 등 기존 트래커명 기반 안내 목록과는 무관하게
+// 조용히 지나간다 - 파일명이 그 목록들의 트래커명과 겹칠 일이 없어서).
+async function collectReferenceFileRecords(client, { allTrackers, allCategories, cilRows, onProgress = null }) {
+  const referenceTrackers = [...allTrackers, ...allCategories].filter((t) => !BRACKET_TAG_RE.test(t.name || ""));
+  if (referenceTrackers.length === 0) return [];
+
+  const cilRowByWorkItemUri = new Map();
+  for (const row of cilRows) {
+    if (row.workItemUri) cilRowByWorkItemUri.set(row.workItemUri, row);
+  }
+
+  const records = [];
+  for (const tracker of referenceTrackers) {
+    onProgress?.({ phase: `${tracker.name} 내부 파일 조회 중...` });
+    let items;
+    try {
+      const result = await client.fetchAllItems(`${client.baseUrl}${tracker.uri}/items`, {});
+      items = result.items;
+    } catch (e) {
+      console.error(`[${tracker.name}] Reference 파일 목록 조회 실패:`, e);
+      continue;
+    }
+    for (const item of items) {
+      const matched = cilRowByWorkItemUri.get(item.uri);
+      records.push({
+        cilId: matched ? matched.cilId : null,
+        trackerName: item.name,
+        isReferenceFile: true,
+        referenceFileRegistered: !!matched,
+      });
+    }
+  }
+  return records;
+}
+
 /**
  * 감사 대상 데이터를 codebeamer에서 수집한다. onlyTrackerNames를 주면(비어있지 않은 배열)
  * 등재된 트래커 중 그 이름들만 실제 조회(processTrackerRow)하고, 나머지는 건드리지 않는다 -
@@ -578,10 +643,10 @@ export async function listRegisteredTrackerNames(client, { projectName, trackerC
  *   순차로 조회하는 동안 각 단계가 시작될 때(페이지네이션이 있는 조회는 페이지마다) 불러준다.
  * - { trackerName, status: "start"|"done", completed, total }: 트래커 하나씩 조회를
  *   시작/완료할 때마다 불러준다.
- * @returns {{records: Array, unregisteredTrackers: Array<{trackerName, trackerUri}>, projectId: string}}
+ * @returns {{records: Array, unregisteredTrackers: Array<{trackerName, trackerUri}>, projectId: string, fetchFailedTrackers: string[]}}
  */
-export async function collectAuditData(client, { projectName, trackerCil, trackerNcl, onlyTrackerNames = null, onProgress = null, docHistoryCheckpoints = {}, docHistoryCheckpointsById = {} }) {
-  const { userUri, allTrackers, registered, unregistered } = await loadMergedTrackerRows(client, { projectName, trackerCil, onProgress });
+export async function collectAuditData(client, { projectName, trackerCil, trackerNcl, onlyTrackerNames = null, onProgress = null, docHistoryCheckpoints = {}, docHistoryCheckpointsById = {}, includeReferenceFiles = true }) {
+  const { userUri, allTrackers, allCategories, cilRows, registered, unregistered } = await loadMergedTrackerRows(client, { projectName, trackerCil, onProgress });
   const reviewReportUriMap = buildReviewReportJoinMap(registered);
 
   const targetRows = onlyTrackerNames && onlyTrackerNames.length
@@ -620,15 +685,70 @@ export async function collectAuditData(client, { projectName, trackerCil, tracke
   const isEventbasedWorkflow = makeEventBasedChecker(client);
   const ctx = { reviewReportUriMap, latestBaselines, allBaselinesByTracker, docHistoryCheckpoints, docHistoryCheckpointsById, validPrNumbers, isEventbasedWorkflow };
 
+  // processTrackerRow 안의 client.getJson/putJson은 순수 네트워크 오류(fetch 자체 실패 -
+  // HTTP 에러 코드가 아니라 연결이 끊긴 경우)를 못 잡고 그대로 던진다. 트래커 하나가 이렇게
+  // 실패했다고 감사 전체를 중단시키면 안 되므로, 여기서 트래커 단위로 잡아서 그 트래커만
+  // "조회 실패"로 건너뛰고 나머지는 계속 진행한다. 실패한 트래커명은 따로 모아뒀다가
+  // audit.js가 "재시도" 버튼으로 그 트래커들만 다시 조회할 수 있게 반환한다.
   let completed = 0;
+  const fetchFailedTrackers = [];
   const results = await mapWithConcurrency(targetRows, 15, async (row) => {
     onProgress?.({ trackerName: row.trackerName, status: "start", completed, total: targetRows.length });
-    const result = await processTrackerRow(client, row, ctx);
+    let result;
+    try {
+      result = await processTrackerRow(client, row, ctx);
+    } catch (e) {
+      console.error(`[${row.trackerName}] 조회 실패:`, e);
+      fetchFailedTrackers.push(row.trackerName);
+      // 상세 데이터는 하나도 못 가져왔지만, CIL에서 이미 확보해둔 cilId/트래커명은 그대로
+      // 있다 - 이 값들로 가짜 행을 만들어서(noLinkedTracker placeholder와 같은 패턴) 표에는
+      // 보이게 하고, 4개 규칙 전부 사람이 직접 판정해야만 반영할 수 있게 강제한다
+      // (getManualCheckFlags/audit.js 참고). cilId가 진짜 codebeamer 아이템을 가리키므로
+      // 사람이 판정을 채우면 정상적으로 반영된다.
+      result = {
+        cilId: row.cilId,
+        trackerName: row.trackerName,
+        trackerId: "",
+        trackerType: "",
+        itemCount: 0,
+        fileName: "",
+        paItemName: "",
+        paItemId: null,
+        firstEdit: "",
+        lastEdit: "",
+        status: null,
+        currentVersion: "미업로드",
+        validPrNumbers: ctx.validPrNumbers,
+        versioning: "",
+        verDesc: "",
+        reviewReportItemCount: "해당없음",
+        reviewReportStatus: "",
+        reviewReportUploaded: "해당없음",
+        waitingBeforeApproval: null,
+        reviewReportLastUpload: "",
+        owner: "",
+        createDateCurrent: false,
+        targetVersion: "",
+        versionCheckFailReason: "",
+        versionCheckPaItemId: null,
+        isEventBased: false,
+        testResultClosedDate: "",
+        itemFetchIncomplete: false,
+        fetchFailed: true,
+      };
+    }
     completed += 1;
     onProgress?.({ trackerName: row.trackerName, status: "done", completed, total: targetRows.length });
     return result;
   });
   const records = results.filter((r) => r !== null);
 
-  return { records, unregisteredTrackers: unregistered, projectId };
+  // Reference 계열 파일 단위 등재 확인은 재시도(특정 트래커만 다시 조회) 흐름에서는 뺀다 -
+  // 파일 레코드는 트래커명이 아니라 파일명 단위라 namesToRetry 기준 교체/중복 제거 로직과
+  // 안 맞아서, 재시도 때마다 다시 돌리면 표에 같은 파일이 중복으로 쌓인다.
+  const referenceFileRecords = includeReferenceFiles
+    ? await collectReferenceFileRecords(client, { allTrackers, allCategories, cilRows, onProgress })
+    : [];
+
+  return { records: [...records, ...referenceFileRecords], unregisteredTrackers: unregistered, projectId, fetchFailedTrackers };
 }

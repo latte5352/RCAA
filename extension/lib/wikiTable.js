@@ -131,9 +131,13 @@ function extractTargetVersionFromCellStyledTable(section, targetNorm) {
       const line = rawLine.trim();
       if (!line.startsWith("|")) continue;
       if (/^\|<\s*$/.test(line)) continue; // 병합된 빈 칸 - 새 셀 아님
-      // 표의 마지막 셀은 줄바꿈 없이 표 닫는 토큰("}]")이 바로 이어 붙기도 한다(예: "v1.6}]") -
-      // 그것도 뒤쪽 백슬래시 이어붙이기 표시와 같이 떼어낸다.
-      const content = stripStyleWrappers(line.slice(1)).replace(/(?:\\+|\}\])+\s*$/, "").trim();
+      // 표의 마지막 셀은 줄바꿈 없이 표 닫는 토큰("}]")이 바로 이어 붙기도 한다(예:
+      // "%%(...)v1.31%!}]") - stripStyleWrappers는 "%!"가 문자열 맨 끝에 있어야만 스팬
+      // 마감으로 인식하므로, 그 뒤에 "}]"가 곧바로 붙어있으면 못 떼고 셀 값에 "%!"가
+      // 남아버린다("v1.31%!"). 그래서 "}]"/백슬래시 이어붙이기 표시는 스타일을 벗기기
+      // 전에 먼저 떼서, stripStyleWrappers가 항상 깨끗한 "...%!" 상태를 받게 한다.
+      const trimmedLine = line.slice(1).replace(/(?:\\+|\}\])+\s*$/, "");
+      const content = stripStyleWrappers(trimmedLine).trim();
       cells.push(content);
     }
     if (cells.length < 2) continue;

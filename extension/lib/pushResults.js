@@ -127,6 +127,9 @@ export async function pushAllResults(client, records, excludedCilIds = new Set()
   for (let i = 0; i < records.length; i += 1) {
     const record = records[i];
     if (excludedCilIds.has(record.cilId)) continue;
+    // Reference 계열 파일 중 CIL/RDL에 아예 등재가 안 된 것(cilId 없음)은 반영할 codebeamer
+    // 항목 자체가 없다 - 표에는 보여주되 반영 대상에서는 제외한다.
+    if (record.cilId == null) continue;
 
     const result = await pushRecordResult(client, record);
     if (result === "duplicate_skip") {

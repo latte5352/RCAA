@@ -428,7 +428,7 @@ export function checkReviewReportVersionRule(record, nameIndex) {
  * (1=OK, 2=NG, null=대상 아님)과 comment(간결한 사유, codebeamer 전송용),
  * detailComment(상세 사유 배열)를 채워 넣는다.
  *
- * @returns {{records, versionCheckFailures: Array<{trackerName, reason, targetPaItemId, reviewReportPaItemId}>, incompleteFetchTrackers: string[], manualStatusCheckTrackers: string[], docHistoryManualCheckTrackers: Array<{trackerName, reason}>, noTrackerManualCheckTrackers: string[]}}
+ * @returns {{records, versionCheckFailures: Array<{trackerName, reason, targetPaItemId, reviewReportPaItemId}>, incompleteFetchTrackers: string[], manualStatusCheckTrackers: string[], docHistoryManualCheckTrackers: Array<{trackerName, reason, paItemId}>, noTrackerManualCheckTrackers: string[], unregisteredReferenceFiles: string[]}}
  */
 export function runAudit(records, options = {}) {
   const {
@@ -447,8 +447,29 @@ export function runAudit(records, options = {}) {
   // 규칙은 사람이 직접 입력하지 않으면 반영을 막아야 한다 - audit.js가 이 목록을 보고 강제
   // 입력창을 띄운다.
   const noTrackerManualCheckTrackers = [];
+  // Reference 계열 파일 중 CIL/RDL 어디에도 등재가 안 된 것들 - 반영할 codebeamer 항목 자체가
+  // 없어 형상감사 표에 실어봤자 의미가 없으므로(체크박스도 못 켬), 표에서는 빼고 별도 경고
+  // 목록으로만 안내한다. 등재된 파일은 그대로 표의 한 행으로 남는다.
+  const unregisteredReferenceFiles = [];
 
   for (const record of records) {
+    // Reference 계열 파일 단위 등재 확인(collectReferenceFileRecords) 결과 - 트래커/파일명
+    // 비교(checkSaveRule 등)나 버전/이력/상태 개념 자체가 이 파일들엔 안 맞으므로, 표준 4규칙
+    // 엔진을 아예 안 태우고 저장 규칙 하나만 등재 여부 그대로 반영한다.
+    if (record.isReferenceFile) {
+      if (!record.referenceFileRegistered) {
+        unregisteredReferenceFiles.push(record.trackerName);
+        continue;
+      }
+      record.saveRule = 1;
+      record.versionRule = null;
+      record.docHistoryRule = null;
+      record.statusRule = null;
+      record.comment = "";
+      record.detailComment = [];
+      continue;
+    }
+
     if (record.itemFetchIncomplete) {
       incompleteFetchTrackers.push(record.trackerName);
     }
@@ -501,7 +522,12 @@ export function runAudit(records, options = {}) {
     // isEventBased/isDateBasedTracker/itemCount 0/아직 재버전 안 됨 등 다른 이유로 docHistResult가
     // null인 경우는 이 안내 목록의 취지(승인 이후라 자동 판정 불가)와 다르므로 올리지 않는다.
     if (docHistResult === null && FINALIZED_STATUSES.has(record.status) && record.docHistoryManualCheckReason) {
-      docHistoryManualCheckTrackers.push({ trackerName: record.trackerName, reason: record.docHistoryManualCheckReason });
+      docHistoryManualCheckTrackers.push({
+        trackerName: record.trackerName,
+        reason: record.docHistoryManualCheckReason,
+        // audit.js가 "대상 산출물에서 직접 확인" 링크로 씀 - 이 트래커(대상 문서) 자신의 PA 아이템 ID.
+        paItemId: record.paItemId,
+      });
     }
 
     // 상태 규칙 (상태 규칙 + 리뷰 대상 버전 규칙 통합 - 같은 codebeamer 필드로 반영됨)
@@ -561,7 +587,9 @@ export function runAudit(records, options = {}) {
     // 2) 트래커는 있지만 아무 것도 등록 안 돼서(itemCount 0) 규칙 검사가 전부 스킵된 경우는
     //    "이상 없음"이라고 하면 마치 검사해서 통과한 것처럼 오해할 수 있어서, 감사 대상에서
     //    제외됐다는 걸 명시한다.
-    if (record.noLinkedTracker) {
+    if (record.fetchFailed) {
+      record.comment = "네트워크 오류로 조회하지 못함 - 재시도하거나 직접 확인 후 판정 필요";
+    } else if (record.noLinkedTracker) {
       record.comment = "codebeamer에 연결된 트래커가 없음 - 실제 산출물이 있는 곳(Bitbucket 등)에서 직접 확인 필요";
     } else if (ngReasons.length === 0 && (record.itemCount || 0) === 0) {
       record.comment = "파일이 등재되지 않아 감사 대상에서 제외";
@@ -579,7 +607,8 @@ export function runAudit(records, options = {}) {
   }
 
   return {
-    records, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers, docHistoryManualCheckTrackers,
-    noTrackerManualCheckTrackers,
+    records: records.filter((r) => !(r.isReferenceFile && !r.referenceFileRegistered)),
+    versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers, docHistoryManualCheckTrackers,
+    noTrackerManualCheckTrackers, unregisteredReferenceFiles,
   };
 }
