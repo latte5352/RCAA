@@ -55,9 +55,12 @@ function stripTrailingQualifier(name) {
   return (name || "").replace(TRAILING_QUALIFIER_RE, "").trim();
 }
 
-/** 표 행 매칭용 정규화: 공백/하이픈/언더스코어 표기 차이는 무시하고 비교한다. */
+// 표 행 매칭용 정규화: 공백/하이픈/언더스코어 표기 차이는 무시하고 비교한다. "~"도 같이
+// 지운다 - codebeamer 위키 에디터가 하이픈/언더스코어를 다른 서식으로 오해하지 않게
+// "~-", "~_"처럼 자동으로 이스케이프해두는 경우가 있어서(예: "Verification~-Integration"),
+// 그 "~" 한 글자 때문에 원래 하이픈만 있었다면 매칭됐을 이름이 어긋나는 걸 막기 위함.
 function normalizeNameForRowMatch(name) {
-  return (name || "").replace(/[\s\-_]+/g, "").toLowerCase();
+  return (name || "").replace(/[\s~\-_]+/g, "").toLowerCase();
 }
 
 /** 이름 끝의 "(MCU)", "(AP)" 같은 괄호 한정자는 무시하고 접미사 일치 여부를 확인한다. */
