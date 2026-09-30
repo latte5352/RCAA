@@ -693,9 +693,14 @@ async function collectReferenceFileRecords(client, { allTrackers, allCategories,
   for (const tracker of referenceTrackers) {
     onProgress?.({ phase: `${tracker.name} 내부 파일 조회 중...` });
     let items;
+    let incomplete = false;
     try {
       const result = await client.fetchAllItems(`${client.baseUrl}${tracker.uri}/items`, {});
       items = result.items;
+      // 일반 트래커(processTrackerRow)와 똑같이, 페이지네이션이 중간에 잘렸으면 등재 여부
+      // 판단 자체를 못 믿는다 - 미등재로 잘못 보일 수도 있으니 그대로 두면 안 된다. 아래에서
+      // 각 레코드에 실어서 runAudit의 기존 incompleteFetchTrackers 처리에 그대로 태운다.
+      incomplete = result.incomplete;
     } catch (e) {
       console.error(`[${tracker.name}] Reference 파일 목록 조회 실패:`, e);
       continue;
@@ -707,6 +712,7 @@ async function collectReferenceFileRecords(client, { allTrackers, allCategories,
         trackerName: item.name,
         isReferenceFile: true,
         referenceFileRegistered: !!matched,
+        itemFetchIncomplete: incomplete,
       });
     }
   }
