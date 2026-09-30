@@ -4,7 +4,9 @@
 
 import { createClient } from "./lib/codebeamerClient.js";
 import { verifyLogin, listProjects } from "./lib/projects.js";
-import { listRegisteredTrackerNames } from "./lib/collector.js";
+import { listRegisteredTrackerNames, suggestTemplateTracker, loadProjectTrackers } from "./lib/collector.js";
+import { cloneTracker, deleteTracker } from "./lib/trackerAdmin.js";
+import { extractProcessTag } from "./lib/wikiTable.js";
 import { loadReviewState } from "./lib/reviewState.js";
 import { exportHistorySnapshot, importHistorySnapshot } from "./lib/history.js";
 import { checkUserProjectRole, filterProjectsByRole } from "./lib/memberRoles.js";
@@ -36,6 +38,20 @@ const nameMismatchCilOnlyWrap = document.getElementById("nameMismatchCilOnlyWrap
 const nameMismatchCilOnlyList = document.getElementById("nameMismatchCilOnlyList");
 const nameMismatchCilOnlyCount = document.getElementById("nameMismatchCilOnlyCount");
 const recheckNameMatchBtn = document.getElementById("recheckNameMatchBtn");
+const trackerCreateOverlay = document.getElementById("trackerCreateOverlay");
+const trackerCreateSourceNote = document.getElementById("trackerCreateSourceNote");
+const trackerCreateProjectSelect = document.getElementById("trackerCreateProjectSelect");
+const trackerCreateTemplateSelect = document.getElementById("trackerCreateTemplateSelect");
+const trackerCreateNameInput = document.getElementById("trackerCreateNameInput");
+const trackerCreateKeyInput = document.getElementById("trackerCreateKeyInput");
+const trackerCreateError = document.getElementById("trackerCreateError");
+const trackerCreateCancelBtn = document.getElementById("trackerCreateCancelBtn");
+const trackerCreateConfirmBtn = document.getElementById("trackerCreateConfirmBtn");
+const trackerDeleteOverlay = document.getElementById("trackerDeleteOverlay");
+const trackerDeleteMessage = document.getElementById("trackerDeleteMessage");
+const trackerDeleteError = document.getElementById("trackerDeleteError");
+const trackerDeleteCancelBtn = document.getElementById("trackerDeleteCancelBtn");
+const trackerDeleteConfirmBtn = document.getElementById("trackerDeleteConfirmBtn");
 // 주기적 활동 산출물 검사를 당분간 안 하기로 해서, 이 주기 선택 UI 참조도 같이 주석 처리
 // (popup.html의 관련 <select> 자체도 주석 처리돼 있음 - 필요해지면 같이 복구).
 // const cadenceSelect = document.getElementById("cadenceSelect");
@@ -63,6 +79,16 @@ let trackerNamesReady = false;
 // 트래커/Item List 이름 불일치(둘 중 하나에만 있는 것)가 있으면 true - 이름을 맞춰서
 // 재확인하기 전까지는 감사 대상에서 조용히 빠지는 산출물이 생기므로, 감사 시작 자체를 막는다.
 let hasNameMismatch = false;
+// 이름 불일치 화면에서 트래커를 바로 생성(복제)/삭제할 때 쓰는 상태. mismatchProjectUri는
+// loadTrackerNamesForCurrentProject가 채워두고(새 트래커가 만들어질 대상 프로젝트),
+// pendingDelete*는 삭제 확인 다이얼로그가 열려있는 동안만 잠깐 들고 있는다(어느 트래커를
+// 지울지). templateProjectsCache는 "템플릿을 가져올 프로젝트" 드롭다운용 - 감사 대상
+// 프로젝트와 무관하게 계정이 접근 가능한 전체 프로젝트 목록이라 세션 동안 한 번만 불러와
+// 재사용한다.
+let mismatchProjectUri = null;
+let templateProjectsCache = null;
+let pendingDeleteTrackerUri = null;
+let pendingDeleteTrackerName = null;
 
 const runConfirmOverlay = document.getElementById("runConfirmOverlay");
 const runConfirmYesBtn = document.getElementById("runConfirmYesBtn");
@@ -446,27 +472,42 @@ function renderTrackerOptions(filterText) {
 
 // 이름 순 정렬 + 개수 표시 + 한 줄씩 구분되는 카드형 리스트로 렌더링한다(그냥 죽 늘어놓으면
 // 트래커가 10개, 20개씩 나올 때 알아보기 힘들어서). 각 줄은 나중에 "복사" 버튼이 그대로
-// 텍스트로 긁어갈 수 있게 .mismatch-list-item 클래스를 붙인다.
-function renderMismatchList(container, countEl, items, getText) {
-  const names = items.map(getText).sort((a, b) => a.localeCompare(b, "ko"));
-  countEl.textContent = `${names.length}개`;
+// 텍스트로 긁어갈 수 있게 .mismatch-list-item-name 클래스를 붙인다. renderActions가 있으면
+// 이름 옆에 그 항목 전용 버튼(생성/삭제)을 같이 붙인다 - codebeamer를 오가지 않고 여기서
+// 바로 처리할 수 있게.
+function renderMismatchList(container, countEl, items, getText, renderActions) {
+  // getText(item)이 빈 값인 행이 섞여 있어도(원인 확인 중) 정렬에서 죽지 않게 방어하고,
+  // 콘솔에 원인 파악용으로 그 항목을 그대로 남긴다.
+  const sorted = [...items].sort((a, b) => {
+    const nameA = getText(a) || "";
+    const nameB = getText(b) || "";
+    return nameA.localeCompare(nameB, "ko");
+  });
+  countEl.textContent = `${sorted.length}개`;
   container.innerHTML = "";
-  for (const name of names) {
+  for (const item of sorted) {
+    const displayName = getText(item);
+    if (!displayName) console.warn("[renderMismatchList] 이름이 없는 항목:", item);
     const row = document.createElement("div");
     row.className = "mismatch-list-item";
-    row.textContent = name;
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "mismatch-list-item-name";
+    nameSpan.textContent = displayName || "(이름 없음)";
+    row.appendChild(nameSpan);
+    renderActions?.(item, row);
     container.appendChild(row);
   }
 }
 
 // 그룹 제목 옆 "복사" 버튼 - 다른 사람에게 넘기는 게 아니라, 본인이 직접 codebeamer 가서
 // 트래커를 만들거나 Item List 이름을 고칠 때 하나씩 보면서 처리하기 편하게 목록을 줄바꿈으로
-// 이어붙여 클립보드에 복사해둔다.
+// 이어붙여 클립보드에 복사해둔다. 이름만 긁어야 하므로(옆에 붙은 생성/삭제 버튼 글자가 섞여
+// 들어가면 안 됨) .mismatch-list-item이 아니라 .mismatch-list-item-name만 읽는다.
 nameMismatchBlock.addEventListener("click", async (e) => {
   const btn = e.target.closest(".mismatch-copy-btn");
   if (!btn) return;
   const container = document.getElementById(btn.dataset.copyTarget);
-  const text = Array.from(container.querySelectorAll(".mismatch-list-item")).map((el) => el.textContent).join("\n");
+  const text = Array.from(container.querySelectorAll(".mismatch-list-item-name")).map((el) => el.textContent).join("\n");
   const original = btn.textContent;
   try {
     await navigator.clipboard.writeText(text);
@@ -490,10 +531,11 @@ async function loadTrackerNamesForCurrentProject() {
     trackerListBox.classList.remove("hidden");
     try {
       const client = createClient({ baseUrl: BASE_URL, baseUrlV3: BASE_URL_V3, ...credentials });
-      const { trackerNames, unregisteredTrackers, cilOnlyEntries } = await listRegisteredTrackerNames(
+      const { trackerNames, unregisteredTrackers, cilOnlyEntries, projectUri } = await listRegisteredTrackerNames(
         client, { projectName: selectedProjectName, trackerCil: TRACKER_NAME_CIL }
       );
       trackerNamesLoadedForProject = selectedProjectName;
+      mismatchProjectUri = projectUri;
       trackerSearchInput.placeholder = "트래커 검색...";
 
       // 트래커/Item List 이름이 하나라도 안 맞으면, 그 산출물은 감사도 반영도 안 되는 채로
@@ -504,9 +546,23 @@ async function loadTrackerNamesForCurrentProject() {
         trackerPicker.classList.add("hidden");
         trackerSelectionSummary.classList.add("hidden");
         nameMismatchUnregisteredWrap.classList.toggle("hidden", unregisteredTrackers.length === 0);
-        renderMismatchList(nameMismatchUnregisteredList, nameMismatchUnregisteredCount, unregisteredTrackers, (t) => t.trackerName);
+        renderMismatchList(nameMismatchUnregisteredList, nameMismatchUnregisteredCount, unregisteredTrackers, (t) => t.trackerName, (t, row) => {
+          const delBtn = document.createElement("button");
+          delBtn.type = "button";
+          delBtn.className = "mismatch-action-btn mismatch-delete-btn";
+          delBtn.textContent = "삭제";
+          delBtn.addEventListener("click", () => openTrackerDeleteDialog(t));
+          row.appendChild(delBtn);
+        });
         nameMismatchCilOnlyWrap.classList.toggle("hidden", cilOnlyEntries.length === 0);
-        renderMismatchList(nameMismatchCilOnlyList, nameMismatchCilOnlyCount, cilOnlyEntries, (t) => t.trackerName);
+        renderMismatchList(nameMismatchCilOnlyList, nameMismatchCilOnlyCount, cilOnlyEntries, (t) => t.trackerName, (t, row) => {
+          const createBtn = document.createElement("button");
+          createBtn.type = "button";
+          createBtn.className = "mismatch-action-btn mismatch-create-btn";
+          createBtn.textContent = "트래커 생성";
+          createBtn.addEventListener("click", () => openTrackerCreateDialog(t));
+          row.appendChild(createBtn);
+        });
         nameMismatchBlock.classList.remove("hidden");
         return;
       }
@@ -529,10 +585,18 @@ async function loadTrackerNamesForCurrentProject() {
       updateTrackerSummary();
       renderTrackerOptions(trackerSearchInput.value);
     } catch (e) {
+      // 실패 원인을 조용히 숨기지 않고 화면에 그대로 보여준다 - CIL 트래커를 못 찾음/권한
+      // 부족/네트워크 오류 등 원인이 제각각이라, 메시지 없이는 사용자가 뭘 고쳐야 할지 알 수
+      // 없다 (console에도 남겨서 개발자 도구로 스택까지 볼 수 있게 한다).
+      console.error("트래커 목록 조회 실패:", e);
       allTrackerNames = [];
       trackerSearchInput.placeholder = "트래커 목록을 불러오지 못했습니다";
+      const empty = document.createElement("div");
+      empty.className = "project-option-empty";
+      empty.textContent = e?.message ? `불러오기 실패: ${e.message}` : "트래커 목록을 불러오지 못했습니다";
       trackerListBox.innerHTML = "";
-      trackerListBox.classList.add("hidden");
+      trackerListBox.appendChild(empty);
+      trackerListBox.classList.remove("hidden");
     } finally {
       trackerSearchInput.readOnly = false;
     }
@@ -544,6 +608,279 @@ async function loadTrackerNamesForCurrentProject() {
 
 recheckNameMatchBtn.addEventListener("click", () => {
   loadTrackerNamesForCurrentProject();
+});
+
+// ── 이름 불일치 화면에서 바로 트래커 생성(복제)/삭제 ────────────────────────────
+// codebeamer REST API(cb/rest, v2)의 POST {트래커URI}/clone, DELETE {트래커URI}를 그대로
+// 쓴다(lib/trackerAdmin.js). 두 작업 다 되돌리기 어려운 작업이라(삭제는 codebeamer 휴지통으로
+// 이동되긴 하지만 이 확장에서 복구할 방법은 없음) 확인 다이얼로그를 거친 뒤에만 실행하고,
+// 끝나면 항상 이름 불일치 목록을 다시 불러와(loadTrackerNamesForCurrentProject) 최신 상태를
+// 보여준다.
+//
+// 복제 템플릿은 감사 대상 프로젝트 자신의 트래커가 아니라, 사용자가 직접 고르는 별도
+// "템플릿 프로젝트"에서 가져온다 - 감사 대상 프로젝트 안에서 다른 프로세스 도메인 트래커를
+// 템플릿으로 쓰면 권한 설정이 프로세스마다 달라서 꼬이기 때문(실사용자 확인 사항). 템플릿
+// 프로젝트 후보는 계정이 접근 가능한 전체 프로젝트 목록이고, 감사 대상 프로젝트 이름에 있는
+// "ASPICE4.1" 같은 버전 태그와 같은 태그가 붙은 "...Template..." 프로젝트가 있으면 그걸
+// 기본값으로 미리 골라둔다(예: "ASPICE4.1 Test PROJECT" -> "SL Project Template1.0
+// (ASPICE4.1 CSMS1.0)"). 못 찾으면 추천 없이 사용자가 직접 고르게 둔다.
+
+function extractAspiceTag(name) {
+  const m = /ASPICE\s*[\d.]+/i.exec(name || "");
+  return m ? m[0].replace(/\s+/g, "").toUpperCase() : null;
+}
+
+function guessDefaultTemplateProject(projects, currentProjectName) {
+  const tag = extractAspiceTag(currentProjectName);
+  if (!tag) return null;
+  return projects.find((p) => /template/i.test(p.name) && extractAspiceTag(p.name) === tag) || null;
+}
+
+// 감사 대상 프로젝트 이름에 ASPICE 버전 태그가 없어서(예: "CB Test Project") 자동 추천이
+// 안 되는 경우, 사용자가 한 번 고른 템플릿 프로젝트를 그 프로젝트 전용 기본값으로 기억해둔다
+// (selected_trackers와 같은 방식 - 프로젝트명별 맵으로 세션 동안 저장). 다음에 같은 프로젝트에서
+// "트래커 생성"을 열면 매번 다시 찾지 않고 바로 이 프로젝트가 맨 위에 기본 선택돼 있다.
+async function persistTemplateProjectChoice(projectUriValue) {
+  if (!selectedProjectName || !projectUriValue) return;
+  const { template_project_by_project } = await chrome.storage.session.get("template_project_by_project");
+  const map = template_project_by_project || {};
+  map[selectedProjectName] = projectUriValue;
+  await chrome.storage.session.set({ template_project_by_project: map });
+}
+
+async function getStoredTemplateProjectUri() {
+  if (!selectedProjectName) return null;
+  const { template_project_by_project } = await chrome.storage.session.get("template_project_by_project");
+  const map = template_project_by_project || {};
+  return map[selectedProjectName] || null;
+}
+
+// 방금 불러온 템플릿 프로젝트의 트래커 목록 - 트래커 드롭다운에서 고른 값(uri)으로 그
+// 트래커의 원래 이름(프로세스 태그 포함)을 다시 찾을 때 쓴다(applyNameFromSelectedTemplate).
+let currentTemplateTrackerList = [];
+// 지금 만들려는 새 트래커의 "순수" 이름(CIL 항목명에서 대괄호 태그를 뗀 것) - 템플릿을
+// 바꿀 때마다 이름 입력칸을 이 기준으로 다시 채우기 위해 다이얼로그를 여는 시점에 고정해둔다.
+let pendingCreateBaseName = "";
+
+// "SUP.10" + "Change Request Plan" -> "SUP10_CRP" - 태그의 점을 떼고, 이름의 각 단어
+// 첫 글자를 이어붙인다. 키는 codebeamer 전체에서 겹치면 안 되는 짧은 식별자라 자동 생성은
+// 어디까지나 출발점이고, 겹치면(생성 실패) 사용자가 직접 고쳐야 한다.
+function generateKeySuggestion(tag, baseName) {
+  const tagPart = (tag || "").replace(/\./g, "");
+  const initials = (baseName || "").split(/\s+/).filter(Boolean).map((w) => w[0]).join("").toUpperCase();
+  if (tagPart && initials) return `${tagPart}_${initials}`;
+  return tagPart || initials;
+}
+
+// codebeamer는 트래커 이름이 "[SUP.9]Change Management Plan"처럼 프로세스 태그 대괄호로
+// 시작해야만 Item List와 매칭된다(collector.js의 mergeCilWithTrackers - 대괄호 없는
+// 트래커는 아예 매칭 후보에서 빠진다). CIL 항목명 자체엔 보통 이 태그가 없어서, 그대로
+// 새 트래커 이름으로 쓰면 만들어져도 계속 "Item List엔 있는데 트래커를 못 찾음"에 남는다.
+// 그래서 고른 템플릿 트래커의 태그를 그대로 물려받아 이름/키를 채운다(편집 가능 - 필요하면
+// 직접 고칠 수 있음).
+function applyNameFromSelectedTemplate() {
+  const template = currentTemplateTrackerList.find((t) => t.uri === trackerCreateTemplateSelect.value);
+  if (!template) return;
+  const tag = extractProcessTag(template.name);
+  trackerCreateNameInput.value = tag ? `[${tag}]${pendingCreateBaseName}` : pendingCreateBaseName;
+  trackerCreateKeyInput.value = generateKeySuggestion(tag, pendingCreateBaseName);
+}
+
+// 템플릿 프로젝트 드롭다운에서 고른 프로젝트의 트래커 목록을 불러와 템플릿 트래커 드롭다운을
+// 채운다(이름이 가장 비슷한 걸 추천/기본 선택). targetName은 추천 기준으로 삼을 이름 -
+// 프로세스 태그가 매칭에 영향을 주지 않도록(collector.js의 suggestTemplateTracker도 태그를
+// 떼고 비교하긴 하지만) pendingCreateBaseName(순수 이름)을 넘긴다.
+async function refreshTemplateTrackerOptions(targetName) {
+  const projectUri = trackerCreateProjectSelect.value;
+  trackerCreateTemplateSelect.innerHTML = "";
+  currentTemplateTrackerList = [];
+  if (!projectUri) {
+    trackerCreateConfirmBtn.disabled = true;
+    return;
+  }
+  trackerCreateTemplateSelect.innerHTML = '<option value="">불러오는 중...</option>';
+  trackerCreateConfirmBtn.disabled = true;
+  try {
+    const credentials = await getCredentials();
+    const client = createClient({ baseUrl: BASE_URL, baseUrlV3: BASE_URL_V3, ...credentials });
+    const trackers = await loadProjectTrackers(client, projectUri);
+    currentTemplateTrackerList = trackers;
+    const suggested = suggestTemplateTracker(targetName, trackers);
+    trackerCreateTemplateSelect.innerHTML = "";
+    if (trackers.length === 0) {
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "(이 프로젝트엔 트래커가 없습니다)";
+      trackerCreateTemplateSelect.appendChild(empty);
+      return;
+    }
+    // 추천 트래커가 있으면 목록 맨 위로 올려서, 드롭다운을 열자마자 스크롤 없이 바로
+    // 보이게 한다(선택값만 맞춰두면 native select가 원래 자리에서 하이라이트만 해줘서
+    // 목록이 길면 찾기 불편하다).
+    const orderedTrackers = suggested ? [suggested, ...trackers.filter((t) => t.uri !== suggested.uri)] : trackers;
+    for (const t of orderedTrackers) {
+      const option = document.createElement("option");
+      option.value = t.uri;
+      option.textContent = t.uri === suggested?.uri ? `⭐ ${t.name} (추천)` : t.name;
+      trackerCreateTemplateSelect.appendChild(option);
+    }
+    if (suggested) trackerCreateTemplateSelect.value = suggested.uri;
+    applyNameFromSelectedTemplate();
+    trackerCreateConfirmBtn.disabled = false;
+  } catch (e) {
+    trackerCreateTemplateSelect.innerHTML = "";
+    trackerCreateError.textContent = `트래커 목록을 불러오지 못했습니다: ${e.message}`;
+    trackerCreateError.style.display = "block";
+  }
+}
+
+trackerCreateProjectSelect.addEventListener("change", () => {
+  // 사용자가 직접 고른 프로젝트는 이 감사 대상 프로젝트의 기본 템플릿 프로젝트로 기억해둔다
+  // (다음에 열 때 자동 추천이 없어도 이 선택이 우선 적용됨 - getStoredTemplateProjectUri).
+  persistTemplateProjectChoice(trackerCreateProjectSelect.value);
+  refreshTemplateTrackerOptions(pendingCreateBaseName);
+});
+
+trackerCreateTemplateSelect.addEventListener("change", applyNameFromSelectedTemplate);
+
+async function openTrackerCreateDialog(cilEntry) {
+  trackerCreateError.style.display = "none";
+  trackerCreateError.textContent = "";
+  trackerCreateSourceNote.textContent = `Item List 항목: ${cilEntry.trackerName}`;
+  // CIL 항목명엔 보통 프로세스 태그가 없으니(있으면 떼고) 일단 그대로 채워두고, 템플릿을
+  // 고르는 즉시 applyNameFromSelectedTemplate이 그 템플릿의 태그를 붙여 다시 채운다.
+  pendingCreateBaseName = cilEntry.trackerName.replace(/^\[.*?\]/, "").trim();
+  trackerCreateNameInput.value = pendingCreateBaseName;
+  trackerCreateKeyInput.value = "";
+  trackerCreateProjectSelect.innerHTML = '<option value="">불러오는 중...</option>';
+  trackerCreateTemplateSelect.innerHTML = "";
+  trackerCreateConfirmBtn.disabled = true;
+  trackerCreateOverlay.classList.remove("hidden");
+
+  try {
+    if (!templateProjectsCache) {
+      const credentials = await getCredentials();
+      const client = createClient({ baseUrl: BASE_URL, baseUrlV3: BASE_URL_V3, ...credentials });
+      // CM 권한으로 필터된 allProjects(감사용 프로젝트 목록)와 달리, 템플릿 프로젝트는
+      // 감사 대상이 아니라서(권한 설정만 미리 해둔 프로젝트일 수 있음) 필터 없이 전체
+      // 프로젝트 목록에서 고를 수 있게 한다.
+      templateProjectsCache = await listProjects(client);
+    }
+  } catch (e) {
+    trackerCreateError.textContent = `프로젝트 목록을 불러오지 못했습니다: ${e.message}`;
+    trackerCreateError.style.display = "block";
+    return;
+  }
+
+  // 이 감사 대상 프로젝트에서 예전에 직접 고른 템플릿 프로젝트가 있으면 그걸 최우선으로,
+  // 없으면 ASPICE 버전 태그로 추측한 프로젝트를 기본값으로 쓴다. 기본값은 목록 맨 위로
+  // 올려서(트래커 드롭다운과 동일한 이유) 열자마자 바로 보이게 한다.
+  const storedProjectUri = await getStoredTemplateProjectUri();
+  const storedProject = storedProjectUri ? templateProjectsCache.find((p) => p.uri === storedProjectUri) : null;
+  const defaultProject = storedProject || guessDefaultTemplateProject(templateProjectsCache, selectedProjectName);
+
+  trackerCreateProjectSelect.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "-- 템플릿 프로젝트 선택 --";
+  trackerCreateProjectSelect.appendChild(placeholder);
+  const orderedProjects = defaultProject
+    ? [defaultProject, ...templateProjectsCache.filter((p) => p.uri !== defaultProject.uri)]
+    : templateProjectsCache;
+  for (const p of orderedProjects) {
+    const option = document.createElement("option");
+    option.value = p.uri;
+    option.textContent = p.uri === defaultProject?.uri ? `⭐ ${p.name} (기본값)` : p.name;
+    trackerCreateProjectSelect.appendChild(option);
+  }
+  if (defaultProject) trackerCreateProjectSelect.value = defaultProject.uri;
+
+  await refreshTemplateTrackerOptions(pendingCreateBaseName);
+}
+
+function closeTrackerCreateDialog() {
+  trackerCreateOverlay.classList.add("hidden");
+}
+
+trackerCreateCancelBtn.addEventListener("click", closeTrackerCreateDialog);
+
+trackerCreateConfirmBtn.addEventListener("click", async () => {
+  const templateTrackerUri = trackerCreateTemplateSelect.value;
+  const name = trackerCreateNameInput.value.trim();
+  const keyName = trackerCreateKeyInput.value.trim();
+
+  trackerCreateError.style.display = "none";
+  if (!templateTrackerUri) {
+    trackerCreateError.textContent = "템플릿으로 쓸 트래커를 골라주세요.";
+    trackerCreateError.style.display = "block";
+    return;
+  }
+  if (!name || !keyName) {
+    trackerCreateError.textContent = "이름과 키를 모두 입력해주세요.";
+    trackerCreateError.style.display = "block";
+    return;
+  }
+  if (!mismatchProjectUri) {
+    trackerCreateError.textContent = "프로젝트 정보를 다시 불러온 뒤 시도해주세요.";
+    trackerCreateError.style.display = "block";
+    return;
+  }
+
+  trackerCreateConfirmBtn.disabled = true;
+  trackerCreateConfirmBtn.textContent = "생성 중...";
+  try {
+    const credentials = await getCredentials();
+    const client = createClient({ baseUrl: BASE_URL, baseUrlV3: BASE_URL_V3, ...credentials });
+    await cloneTracker(client, { templateTrackerUri, projectUri: mismatchProjectUri, name, keyName });
+    closeTrackerCreateDialog();
+    await loadTrackerNamesForCurrentProject();
+  } catch (e) {
+    trackerCreateError.textContent = e?.message || "트래커 생성에 실패했습니다.";
+    trackerCreateError.style.display = "block";
+  } finally {
+    trackerCreateConfirmBtn.disabled = false;
+    trackerCreateConfirmBtn.textContent = "생성";
+  }
+});
+
+function openTrackerDeleteDialog(unregisteredTracker) {
+  pendingDeleteTrackerUri = unregisteredTracker.trackerUri;
+  pendingDeleteTrackerName = unregisteredTracker.trackerName;
+  trackerDeleteError.style.display = "none";
+  trackerDeleteError.textContent = "";
+  trackerDeleteMessage.innerHTML =
+    `"${pendingDeleteTrackerName}" 트래커를 삭제하시겠습니까?<br><br>` +
+    `codebeamer 휴지통으로 이동되어 관리자가 복구할 수는 있지만, 이 작업 자체는 되돌릴 수 없습니다.`;
+  trackerDeleteConfirmBtn.disabled = false;
+  trackerDeleteConfirmBtn.textContent = "예, 삭제";
+  trackerDeleteOverlay.classList.remove("hidden");
+}
+
+function closeTrackerDeleteDialog() {
+  trackerDeleteOverlay.classList.add("hidden");
+  pendingDeleteTrackerUri = null;
+  pendingDeleteTrackerName = null;
+}
+
+trackerDeleteCancelBtn.addEventListener("click", closeTrackerDeleteDialog);
+
+trackerDeleteConfirmBtn.addEventListener("click", async () => {
+  if (!pendingDeleteTrackerUri) return;
+  trackerDeleteError.style.display = "none";
+  trackerDeleteConfirmBtn.disabled = true;
+  trackerDeleteConfirmBtn.textContent = "삭제 중...";
+  try {
+    const credentials = await getCredentials();
+    const client = createClient({ baseUrl: BASE_URL, baseUrlV3: BASE_URL_V3, ...credentials });
+    await deleteTracker(client, pendingDeleteTrackerUri);
+    closeTrackerDeleteDialog();
+    await loadTrackerNamesForCurrentProject();
+  } catch (e) {
+    trackerDeleteError.textContent = e?.message || "트래커 삭제에 실패했습니다.";
+    trackerDeleteError.style.display = "block";
+    trackerDeleteConfirmBtn.disabled = false;
+    trackerDeleteConfirmBtn.textContent = "예, 삭제";
+  }
 });
 
 trackerSearchInput.addEventListener("input", () => {

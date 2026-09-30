@@ -57,6 +57,40 @@ export function createClient({ baseUrl, baseUrlV3, username, password }) {
   }
 
   /**
+   * postJson/deleteJson은 트래커 생성(복제)/삭제처럼 되돌리기 어려운 관리 작업 전용이라,
+   * 실패 시 그냥 상태 코드만이 아니라 codebeamer가 돌려준 응답 본문(에러 사유)까지 메시지에
+   * 실어 보낸다 - 조회/반영(getJson/putJson)과 달리 이런 작업은 실패 원인을 바로 알아야
+   * 사용자가 codebeamer 쪽 설정(이름 중복, 권한 등)을 바로 고칠 수 있기 때문이다.
+   */
+  async function postJson(url, body) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      const err = new Error(`요청 실패 (상태 코드 ${res.status}): ${url}${detail ? ` - ${detail}` : ""}`);
+      err.status = res.status;
+      throw err;
+    }
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
+  }
+
+  async function deleteJson(url) {
+    const res = await fetch(url, { method: "DELETE", headers });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      const err = new Error(`삭제 실패 (상태 코드 ${res.status}): ${url}${detail ? ` - ${detail}` : ""}`);
+      err.status = res.status;
+      throw err;
+    }
+    const text = await res.text().catch(() => "");
+    return text ? JSON.parse(text) : null;
+  }
+
+  /**
    * codebeamer의 /items류 엔드포인트는 기본 페이지 크기(관측상 500)로 페이지네이션되어 있어서,
    * 한 번만 조회하면 그보다 많은 트래커에서 조용히 잘린다. 빈 페이지가 나올 때까지 전부 모은다.
    * 중간 페이지 요청이 실패하면 그때까지 모은 것만 반환하되 incomplete=true를 같이 반환한다.
@@ -88,7 +122,7 @@ export function createClient({ baseUrl, baseUrlV3, username, password }) {
     return { items: allItems, incomplete };
   }
 
-  return { baseUrl, baseUrlV3, getJson, getJsonSoft, getTextSoft, putJson, fetchAllItems };
+  return { baseUrl, baseUrlV3, getJson, getJsonSoft, getTextSoft, putJson, postJson, deleteJson, fetchAllItems };
 }
 
 /**

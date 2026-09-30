@@ -23,6 +23,59 @@ function stripBracketTag(name) {
   return (name || "").replace(BRACKET_TAG_STRIP_RE, "").trim();
 }
 
+function normalizeForTemplateSuggestion(name) {
+  return stripTrailingQualifier(stripBracketTag(name || "")).toLowerCase();
+}
+
+// 이름을 공백 기준으로 토큰화한 뒤, 뒤에서부터 몇 단어가 똑같이 겹치는지 센다. 예:
+// "Hardware Design Specification Review Report"와 "Hardware Requirements Specification
+// Review Report"는 뒤 3단어(Specification Review Report)가 같다 -> 3.
+function trailingCommonWordCount(nameA, nameB) {
+  const wordsA = nameA.split(/\s+/).filter(Boolean);
+  const wordsB = nameB.split(/\s+/).filter(Boolean);
+  let count = 0;
+  while (
+    count < wordsA.length && count < wordsB.length &&
+    wordsA[wordsA.length - 1 - count] === wordsB[wordsB.length - 1 - count]
+  ) {
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * Item List엔 있는데 트래커가 없는 항목(cilOnlyEntries)을 위해 새 트래커를 만들 때, 프로젝트
+ * 안의 기존 트래커 중 템플릿으로 쓰기 가장 적당한 걸 추천한다. 정확히 이름이 같은 트래커는
+ * (있었다면 애초에 이 항목이 cilOnlyEntries에 들어오지 않았을 것이므로) 없다고 전제하고,
+ * 프로세스 태그([HWE.2] 등)와 "(HW)" 같은 한정자를 뗀 뒤 뒤에서부터 겹치는 단어 수로 가장
+ * 가까운 트래커를 고른다 - "...Review Report", "...Specification" 같은 같은 문서 종류는
+ * 보통 필드 구성(스키마)도 같아서, 복제 템플릿으로 가장 그럴듯한 후보이기 때문이다. 겹치는
+ * 단어가 하나도 없으면(추천할 만한 근거가 없으면) null을 반환한다.
+ * @param {string} targetName - 새로 만들 트래커 이름(보통 CIL 항목명 그대로)
+ * @param {Array<{name: string, uri: string}>} candidateTrackers - 같은 프로젝트의 기존 트래커 목록
+ * @returns {{name: string, uri: string}|null}
+ */
+// 뒤에서 1단어만 겹치는 건("...Report"끼리처럼) 대부분의 트래커가 걸려서 신뢰도가 낮다 -
+// 최소 이 이상 겹쳐야("Specification Review Report"처럼 2단어 이상) 추천으로 인정한다.
+const MIN_SUGGESTION_SCORE = 2;
+
+export function suggestTemplateTracker(targetName, candidateTrackers) {
+  const target = normalizeForTemplateSuggestion(targetName);
+  if (!target) return null;
+  let best = null;
+  let bestScore = MIN_SUGGESTION_SCORE - 1;
+  for (const candidate of candidateTrackers) {
+    const normalized = normalizeForTemplateSuggestion(candidate.name);
+    if (!normalized || normalized === target) continue; // 자기 자신과 완전히 같은 이름이면 추천 의미 없음
+    const score = trailingCommonWordCount(target, normalized);
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
+  }
+  return best;
+}
+
 // ruleEngine.js의 PR_IN_DESC_RE와 동일한 패턴("PR" 바로 뒤 공백/콜론/하이픈/물결 0~3글자
 // 이내에 오는 숫자만 PR 번호로 인식 - 그 이유는 ruleEngine.js 쪽 주석 참고) - 여기서는 규칙
 // 판정이 아니라 "문서 이력에 PR 번호가 있는지" 확인용으로 쓴다.
@@ -574,7 +627,25 @@ async function loadMergedTrackerRows(client, { projectName, trackerCil, onProgre
 
   const { registered, unregistered, cilOnlyEntries } = mergeCilWithTrackers(cilRows, allTrackers, allCategories);
 
-  return { userUri, allTrackers, allCategories, cilRows, registered, unregistered, cilOnlyEntries };
+  return { userUri, projectUri: project.uri, allTrackers, allCategories, cilRows, registered, unregistered, cilOnlyEntries };
+}
+
+/**
+ * 트래커 생성(복제) 다이얼로그의 "템플릿을 가져올 프로젝트" 선택용 - 지정한 프로젝트의
+ * 트래커 목록을 가볍게 가져온다. 감사 대상 프로젝트와 무관하게 아무 프로젝트나(주로 권한
+ * 설정을 미리 맞춰둔 템플릿 프로젝트) 넘길 수 있다.
+ * @param {object} client
+ * @param {string} projectUri - 예: "/project/123"
+ * @returns {Promise<Array<{name: string, uri: string}>>}
+ */
+export async function loadProjectTrackers(client, projectUri) {
+  const trackers = await client.getJson(`${client.baseUrl}${projectUri}/trackers`);
+  // 권한 제한 등으로 이름/uri가 없는 항목이 섞여 올 수 있어 걸러낸다(collector.js의 다른
+  // localeCompare 방어 처리 참고).
+  return trackers
+    .filter((t) => t && t.name && t.uri)
+    .map((t) => ({ name: t.name, uri: t.uri }))
+    .sort((a, b) => a.name.localeCompare(b.name, "ko"));
 }
 
 /**
@@ -582,14 +653,24 @@ async function loadMergedTrackerRows(client, { projectName, trackerCil, onProgre
  * per-tracker 조회 전이라 저렴함). 이름 불일치(트래커는 있는데 Item List엔 없음 / Item
  * List엔 있는데 트래커를 못 찾음) 목록도 같이 반환한다 - 감사를 시작하기 전에 이걸로 먼저
  * 막아야(popup.js) 이름이 안 맞아서 감사도 반영도 안 되는 산출물이 조용히 빠지는 걸 방지한다.
- * @returns {Promise<{trackerNames: Array<{name: string, processTag: string}>, unregisteredTrackers: Array<{trackerName, trackerUri}>, cilOnlyEntries: Array<{trackerName, cilId}>}>}
+ * projectUri는 이름 불일치 화면에서 트래커를 바로 생성(복제)할 때(trackerAdmin.js) 새
+ * 트래커가 속할 프로젝트로 필요해서 같이 반환한다. 복제 템플릿 트래커는 이 프로젝트가 아니라
+ * 별도로 고르는 "템플릿 프로젝트"에서 가져온다(loadProjectTrackers 참고) - 같은 프로젝트
+ * 안의 다른 프로세스 도메인 트래커를 템플릿으로 쓰면 권한 설정이 프로세스마다 달라서 꼬인다.
+ * @returns {Promise<{trackerNames: Array<{name: string, processTag: string}>, unregisteredTrackers: Array<{trackerName, trackerUri}>, cilOnlyEntries: Array<{trackerName, cilId}>, projectUri: string}>}
  */
 export async function listRegisteredTrackerNames(client, { projectName, trackerCil }) {
-  const { registered, unregistered, cilOnlyEntries } = await loadMergedTrackerRows(client, { projectName, trackerCil });
+  const { registered, unregistered, cilOnlyEntries, projectUri, allTrackers } = await loadMergedTrackerRows(client, { projectName, trackerCil });
+  // registered 행 중 trackerName이 비어있는 게 섞여 있으면(원인 미확인 - CIL 아이템 자체의
+  // name이 빈 경우로 추정) 정렬(localeCompare)이 그 자리에서 죽어 전체 조회가 실패한다.
+  // 죽는 대신 원인 파악용으로 그 행을 콘솔에 그대로 남기고 "(이름 없음)"으로 표시한다.
   const trackerNames = registered
-    .map((r) => ({ name: r.trackerName, processTag: r.processTag || "" }))
+    .map((r) => {
+      if (!r.trackerName) console.warn("[listRegisteredTrackerNames] trackerName이 없는 registered 행:", r);
+      return { name: r.trackerName || "(이름 없음)", processTag: r.processTag || "" };
+    })
     .sort((a, b) => a.name.localeCompare(b.name, "ko"));
-  return { trackerNames, unregisteredTrackers: unregistered, cilOnlyEntries };
+  return { trackerNames, unregisteredTrackers: unregistered, cilOnlyEntries, projectUri };
 }
 
 // Reference 계열(대괄호 태그 없는) 트래커/카테고리 - 차종 코드 등 정해진 이름 형식이 없는

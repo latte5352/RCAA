@@ -49,13 +49,31 @@
   .mismatch-group-count { font-weight: 400; opacity: .8; }
   .mismatch-copy-btn { width: auto; padding: 3px 8px; font-size: 11px; background: #fff; border: 1px solid #e0a8a3; color: #a5311f; border-radius: 3px; }
   .mismatch-list { background: #fff; border: 1px solid #f0c4bf; border-radius: 4px; max-height: 160px; overflow-y: auto; }
-  .mismatch-list-item { padding: 5px 8px; border-bottom: 1px solid #fbe4e2; color: #333; word-break: break-all; }
+  .mismatch-list-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border-bottom: 1px solid #fbe4e2; color: #333; }
   .mismatch-list-item:nth-child(even) { background: #fffafa; }
   .mismatch-list-item:last-child { border-bottom: none; }
+  .mismatch-list-item-name { word-break: break-all; }
+  .mismatch-action-btn { flex-shrink: 0; width: auto; padding: 3px 8px; font-size: 11px; border-radius: 3px; margin-bottom: 0; }
+  .mismatch-create-btn { background: #fff; border: 1px solid #2e7d32; color: #2e7d32; }
+  .mismatch-delete-btn { background: #fff; border: 1px solid #a5311f; color: #a5311f; }
+  .mismatch-action-btn:disabled { opacity: .5; }
   #recheckNameMatchBtn { width: 100%; margin-top: 4px; background: #c0392b; color: #fff; border: none; font-weight: 600; padding: 8px; }
 
-  #runConfirmOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 100; }
-  #runConfirmBox { background: #fff; border-radius: 6px; padding: 16px; width: 84%; max-width: 300px; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+  #runConfirmOverlay, #trackerCreateOverlay, #trackerDeleteOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  #runConfirmBox, #trackerCreateBox, #trackerDeleteBox { background: #fff; border-radius: 6px; padding: 16px; width: 84%; max-width: 300px; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+  #trackerCreateTitle, #trackerDeleteTitle { font-size: 14px; font-weight: 700; color: #2e7d32; margin-bottom: 8px; }
+  #trackerDeleteTitle { color: #c0392b; }
+  #trackerCreateSourceNote { font-size: 11px; color: #666; margin-bottom: 4px; line-height: 1.5; white-space: pre-line; }
+  #trackerCreateBox label { display: block; font-size: 11px; color: #555; margin: 8px 0 2px; }
+  #trackerCreateBox select, #trackerCreateBox input[type="text"] { width: 100%; box-sizing: border-box; }
+  #trackerDeleteMessage { font-size: 12px; color: #444; line-height: 1.6; margin-bottom: 14px; word-break: break-all; }
+  #trackerCreateError, #trackerDeleteError { color: #c0392b; font-size: 11px; margin-top: 8px; display: none; }
+  #trackerCreateButtons, #trackerDeleteButtons { display: flex; gap: 8px; margin-top: 14px; }
+  #trackerCreateButtons button, #trackerDeleteButtons button { width: auto; flex: 1; margin-bottom: 0; }
+  #trackerCreateConfirmBtn { background: #2e7d32; color: #fff; border: 1px solid #2e7d32; }
+  #trackerCreateCancelBtn, #trackerDeleteCancelBtn { background: #f4f4f4; border: 1px solid #ccc; }
+  #trackerDeleteConfirmBtn { background: #c0392b; color: #fff; border: 1px solid #c0392b; }
+
   #runConfirmTitle { font-size: 14px; font-weight: 700; color: #c0392b; margin-bottom: 8px; }
   #runConfirmMessage { font-size: 12px; color: #444; line-height: 1.6; margin-bottom: 14px; }
   #runConfirmButtons { display: flex; gap: 8px; }
@@ -152,6 +170,38 @@
       <div id="runConfirmButtons">
         <button id="runConfirmNoBtn" type="button">아니오</button>
         <button id="runConfirmYesBtn" type="button">예, 새로 시작</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="trackerCreateOverlay" class="hidden">
+    <div id="trackerCreateBox">
+      <div id="trackerCreateTitle">트래커 생성</div>
+      <div id="trackerCreateSourceNote"></div>
+      <label for="trackerCreateProjectSelect">템플릿을 가져올 프로젝트</label>
+      <select id="trackerCreateProjectSelect"></select>
+      <label for="trackerCreateTemplateSelect">템플릿으로 쓸 기존 트래커</label>
+      <select id="trackerCreateTemplateSelect"></select>
+      <label for="trackerCreateNameInput">새 트래커 이름 (템플릿의 [프로세스 태그]가 자동으로 붙습니다 - 필요하면 직접 수정)</label>
+      <input type="text" id="trackerCreateNameInput">
+      <label for="trackerCreateKeyInput">키(Key) - 태그+이니셜로 자동 생성됩니다 (겹치면 직접 수정)</label>
+      <input type="text" id="trackerCreateKeyInput">
+      <div id="trackerCreateError"></div>
+      <div id="trackerCreateButtons">
+        <button id="trackerCreateCancelBtn" type="button">취소</button>
+        <button id="trackerCreateConfirmBtn" type="button">생성</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="trackerDeleteOverlay" class="hidden">
+    <div id="trackerDeleteBox">
+      <div id="trackerDeleteTitle">⚠ 트래커를 삭제할까요?</div>
+      <div id="trackerDeleteMessage"></div>
+      <div id="trackerDeleteError"></div>
+      <div id="trackerDeleteButtons">
+        <button id="trackerDeleteCancelBtn" type="button">취소</button>
+        <button id="trackerDeleteConfirmBtn" type="button">예, 삭제</button>
       </div>
     </div>
   </div>
