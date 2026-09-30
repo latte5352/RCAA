@@ -18,6 +18,12 @@
   #progressLog .log-done { color: #6ba8ff; }
 
   .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  /* toolbarRow만 두 줄(검색/필터 한 줄 + 선택/다운로드/범례 한 줄)로 나눠 쌓는다 - .toolbar
+     클래스의 flex 배치는 actionsToolbar 등 다른 곳에서 그대로 쓰이므로 안 건드리고, 이 안에서만
+     .toolbar-line으로 한 줄씩 다시 flex를 준다. */
+  #toolbarRow { display: block; }
+  .toolbar-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .toolbar-line + .toolbar-line { margin-top: 8px; }
   #searchInput { flex: 1; min-width: 220px; padding: 9px 12px; font-size: 14px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
   #viewFilterLabel { font-size: 13px; color: #666; white-space: nowrap; }
   #viewFilterSelect { padding: 8px 12px; font-size: 14px; font-weight: 600; color: #333; border: 1px solid #bbc4d0; border-radius: 4px; background: #eef1f5; }
@@ -30,6 +36,7 @@
   #applyBtn:hover { background: #a5311f; }
   #cancelBtn { color: #888; }
   #matchCount { font-size: 13px; color: #888; margin-left: auto; }
+  #downloadBtn { margin-left: auto; }
 
   .warn { margin-bottom: 10px; padding: 12px 18px; border-radius: 4px; font-size: 14px; line-height: 1.6; }
   .warn summary { cursor: pointer; font-size: 14px; font-weight: 700; outline: none; user-select: none; }
@@ -87,8 +94,8 @@
   .col-comment { color: #444; max-width: 360px; line-height: 1.5; }
   .col-comment.default { color: #aaa; font-style: italic; }
 
-  #legend { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #666; }
-  #legend .legend-item { display: flex; align-items: center; gap: 5px; }
+  #legend { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 13px; color: #333; font-weight: 600; background: #eef1f5; border: 1px solid #ccd2da; border-radius: 6px; padding: 7px 14px; }
+  #legend .legend-item { display: flex; align-items: center; gap: 6px; }
 
   #scrollTopBtn { position: fixed; right: 26px; bottom: 26px; z-index: 6; border-radius: 999px; padding: 10px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.18); background: #2d6cdf; color: #fff; border: none; font-weight: 600; }
   #scrollTopBtn:hover { background: #1f57bd; }
@@ -174,27 +181,31 @@
     </details>
 
     <div class="toolbar hidden" id="toolbarRow">
-      <input type="text" id="searchInput" placeholder="산출물명 또는 코멘트로 검색...">
-      <label id="viewFilterLabel" for="viewFilterSelect">보기</label>
-      <select id="viewFilterSelect" title="보고 싶은 범위를 골라주세요">
-        <option value="">전체 보기</option>
-        <option value="ng">NG만 보기 (전체 규칙)</option>
-        <option value="saveRule">저장 규칙 위반만</option>
-        <option value="versionRule">버전 규칙 위반만</option>
-        <option value="docHistoryRule">이력 규칙 위반만</option>
-        <option value="statusRule">상태 규칙 위반만</option>
-      </select>
-      <button id="manualOnlyBtn" type="button">🙋 직접확인 필요만 보기</button>
-      <button id="selectAllBtn" type="button">전체 선택</button>
-      <button id="selectNoneBtn" type="button">전체 해제</button>
-      <button id="downloadBtn" type="button">결과 파일 다운로드</button>
-      <div id="legend" class="hidden">
-        <span class="legend-item"><span class="badge ok">OK</span>규칙 통과</span>
-        <span class="legend-item"><span class="badge ng">NG</span>규칙 위반</span>
-        <span class="legend-item"><span class="badge na">-</span>해당 규칙 검사 대상 아님(N/A)</span>
-        <span class="legend-item"><span class="badge manual">?</span>직접확인 필요(아래 입력창에서 판정)</span>
+      <div class="toolbar-line">
+        <input type="text" id="searchInput" placeholder="산출물명 또는 코멘트로 검색...">
+        <label id="viewFilterLabel" for="viewFilterSelect">보기</label>
+        <select id="viewFilterSelect" title="보고 싶은 범위를 골라주세요">
+          <option value="">전체 보기</option>
+          <option value="ng">NG만 보기 (전체 규칙)</option>
+          <option value="saveRule">저장 규칙 위반만</option>
+          <option value="versionRule">버전 규칙 위반만</option>
+          <option value="docHistoryRule">이력 규칙 위반만</option>
+          <option value="statusRule">상태 규칙 위반만</option>
+        </select>
+        <button id="manualOnlyBtn" type="button">🙋 직접확인 필요만 보기</button>
+        <button id="downloadBtn" type="button">결과 파일 다운로드</button>
       </div>
-      <span id="matchCount"></span>
+      <div class="toolbar-line">
+        <button id="selectAllBtn" type="button">전체 선택</button>
+        <button id="selectNoneBtn" type="button">전체 해제</button>
+        <div id="legend" class="hidden">
+          <span class="legend-item"><span class="badge ok">OK</span>규칙 통과</span>
+          <span class="legend-item"><span class="badge ng">NG</span>규칙 위반</span>
+          <span class="legend-item"><span class="badge na">-</span>해당 규칙 검사 대상 아님(N/A)</span>
+          <span class="legend-item"><span class="badge manual">?</span>직접확인 필요(아래 입력창에서 판정)</span>
+        </div>
+        <span id="matchCount"></span>
+      </div>
     </div>
 
     <div id="empty" class="hidden">검토할 항목이 없습니다.</div>

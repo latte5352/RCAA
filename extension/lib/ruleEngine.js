@@ -453,6 +453,13 @@ export function runAudit(records, options = {}) {
   const unregisteredReferenceFiles = [];
 
   for (const record of records) {
+    // isReferenceFile 여부와 무관하게 먼저 확인한다 - Reference 파일도 페이지네이션이
+    // 중간에 잘리면 "미등재"로 잘못 보일 수 있어서(collectReferenceFileRecords 참고),
+    // 일반 트래커와 똑같이 강제 수기입력 대상(getManualCheckFlags)에 올려야 한다.
+    if (record.itemFetchIncomplete) {
+      incompleteFetchTrackers.push(record.trackerName);
+    }
+
     // Reference 계열 파일 단위 등재 확인(collectReferenceFileRecords) 결과 - 트래커/파일명
     // 비교(checkSaveRule 등)나 버전/이력/상태 개념 자체가 이 파일들엔 안 맞으므로, 표준 4규칙
     // 엔진을 아예 안 태우고 저장 규칙 하나만 등재 여부 그대로 반영한다.
@@ -468,10 +475,6 @@ export function runAudit(records, options = {}) {
       record.comment = "";
       record.detailComment = [];
       continue;
-    }
-
-    if (record.itemFetchIncomplete) {
-      incompleteFetchTrackers.push(record.trackerName);
     }
 
     const ngReasons = [];
