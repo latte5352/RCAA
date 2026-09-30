@@ -87,7 +87,7 @@
   .col-comment { color: #444; max-width: 360px; line-height: 1.5; }
   .col-comment.default { color: #aaa; font-style: italic; }
 
-  #legend { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #666; margin-bottom: 10px; }
+  #legend { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #666; }
   #legend .legend-item { display: flex; align-items: center; gap: 5px; }
 
   #scrollTopBtn { position: fixed; right: 26px; bottom: 26px; z-index: 6; border-radius: 999px; padding: 10px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.18); background: #2d6cdf; color: #fff; border: none; font-weight: 600; }
@@ -188,14 +188,13 @@
       <button id="selectAllBtn" type="button">전체 선택</button>
       <button id="selectNoneBtn" type="button">전체 해제</button>
       <button id="downloadBtn" type="button">결과 파일 다운로드</button>
+      <div id="legend" class="hidden">
+        <span class="legend-item"><span class="badge ok">OK</span>규칙 통과</span>
+        <span class="legend-item"><span class="badge ng">NG</span>규칙 위반</span>
+        <span class="legend-item"><span class="badge na">-</span>해당 규칙 검사 대상 아님(N/A)</span>
+        <span class="legend-item"><span class="badge manual">?</span>직접확인 필요(아래 입력창에서 판정)</span>
+      </div>
       <span id="matchCount"></span>
-    </div>
-
-    <div id="legend" class="hidden">
-      <span class="legend-item"><span class="badge ok">OK</span>규칙 통과</span>
-      <span class="legend-item"><span class="badge ng">NG</span>규칙 위반</span>
-      <span class="legend-item"><span class="badge na">-</span>해당 규칙 검사 대상 아님(N/A)</span>
-      <span class="legend-item"><span class="badge manual">?</span>직접확인 필요(아래 입력창에서 판정)</span>
     </div>
 
     <div id="empty" class="hidden">검토할 항목이 없습니다.</div>

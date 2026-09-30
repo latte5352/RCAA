@@ -629,6 +629,10 @@ async function collectReferenceFileRecords(client, { allTrackers, allCategories,
       });
     }
   }
+  // phase 메시지는 트래커별 조회처럼 "끝났다"는 신호가 따로 없어서, 이 단계가 다 끝난 뒤에도
+  // 화면 로그의 마지막 줄이 계속 "조회 중..." 애니메이션으로 남아있게 된다 - 명시적으로 완료를
+  // 알려서 멈추게 한다.
+  onProgress?.({ done: true, doneText: `✓ Reference 파일 조회 완료 (${referenceTrackers.length}개 트래커)` });
   return records;
 }
 

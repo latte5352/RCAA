@@ -127,6 +127,14 @@ function stopPhaseAnimation() {
 }
 
 function handleCollectionProgress(evt) {
+  if (evt.done) {
+    // phase 메시지(점 애니메이션 도는 줄)는 트래커별 조회 루프처럼 "끝났다"는 신호가 따로
+    // 없어서, collectReferenceFileRecords처럼 phase만 보내고 끝나는 단계는 이걸로 명시적으로
+    // 마무리해줘야 마지막 줄이 "아직 조회 중"인 것처럼 계속 애니메이션이 도는 걸 막을 수 있다.
+    stopPhaseAnimation();
+    appendLogLine(evt.doneText || "완료", true);
+    return;
+  }
   if (evt.phase) {
     // per-tracker 조회 루프 전 단계(프로젝트/트래커 목록/CIL/베이스라인/NCL 조회 등) - 페이지네이션
     // 때문에 같은 단계가 여러 번 불릴 수 있어서, 직전 줄이 phase 메시지면 새 줄을 추가하는 대신
@@ -214,10 +222,35 @@ function getManualCheckFlags(record) {
   return flags.filter((f) => (seenRules.has(f.rule) ? false : (seenRules.add(f.rule), true)));
 }
 
+// 코멘트 텍스트에서 규칙 하나의 자동 사유(reasonText)만 콕 집어 떼어낸다 - 여러 규칙 사유가
+// " / "로 이어붙어 있는데, 한 규칙의 사유 자체가 내부적으로 여러 조각을 " / "로 합친 것일 수도
+// 있어서(예: 버전 규칙), 부분 문자열이 아니라 연속된 조각(parts) 시퀀스로 찾아서 그만큼만
+// 제거한다 - 그래야 다른 규칙 사유나 사람이 직접 적은 문구를 건드리지 않는다.
+function removeReasonFromComment(comment, reasonText) {
+  if (!reasonText) return comment;
+  const parts = comment.split(" / ");
+  const reasonParts = reasonText.split(" / ");
+  for (let i = 0; i + reasonParts.length <= parts.length; i++) {
+    if (reasonParts.every((rp, j) => parts[i + j] === rp)) {
+      parts.splice(i, reasonParts.length);
+      return parts.join(" / ");
+    }
+  }
+  return comment; // 이미 사람이 편집해서 못 찾으면 건드리지 않고 그대로 둔다
+}
+
+function addReasonToComment(comment, reasonText) {
+  if (!reasonText || comment.includes(reasonText)) return comment;
+  return comment ? `${comment} / ${reasonText}` : reasonText;
+}
+
 // isRequired=true: "선택해주세요"부터 시작(안 고르면 반영 차단). isRequired=false: 기본값이
 // "자동 판정 유지"라 안 건드리면 자동 계산값 그대로 나간다(applyManualInputsToRecords 참고) -
 // 사람이 자동 판정에 동의하지 않을 때만 바꾸면 되는 순수 선택 사항.
-function createManualFieldRow(rule, label, reason, isRequired, autoValue) {
+// commentSync: 선택 사항 규칙에서만 쓴다 - { textarea, reasonText(그 규칙의 자동 NG 사유) }를
+// 주면, 이 규칙을 NG가 아닌 값으로 바꿀 때 코멘트에서 그 사유를 빼고, 다시 NG(또는 자동판정
+// 유지)로 돌리면 다시 넣는다.
+function createManualFieldRow(rule, label, reason, isRequired, autoValue, commentSync = null) {
   const fieldRow = document.createElement("div");
   fieldRow.className = "manual-field-row";
 
@@ -256,6 +289,16 @@ function createManualFieldRow(rule, label, reason, isRequired, autoValue) {
     fieldRow.appendChild(reasonSpan);
   }
 
+  if (commentSync && commentSync.reasonText) {
+    const { textarea, reasonText } = commentSync;
+    select.addEventListener("change", () => {
+      const effectiveIsNg = select.value === "auto" || select.value === "2";
+      textarea.value = effectiveIsNg
+        ? addReasonToComment(textarea.value, reasonText)
+        : removeReasonFromComment(textarea.value, reasonText);
+    });
+  }
+
   return fieldRow;
 }
 
@@ -280,23 +323,28 @@ function createManualRow(record, requiredFlags) {
     : "✏ 직접 판정 수정 (선택 사항 - 자동 판정에 동의하지 않으면 바꿔서 반영할 수 있습니다)";
   content.appendChild(title);
 
+  // 아래 필드 행들이 코멘트 칸을 직접 고쳐야 해서(규칙을 NG 아닌 값으로 바꾸면 그 사유를
+  // 코멘트에서 빼줌) textarea를 먼저 만들어두고 자동 코멘트로 미리 채운다 - 그대로 반영해도
+  // 되고, 사람이 그 자리에서 직접 고쳐도 된다.
+  const textarea = document.createElement("textarea");
+  textarea.className = "manual-comment-input";
+  textarea.rows = 2;
+  textarea.value = record.comment || "";
+
   const requiredRuleKeys = new Set(requiredFlags.map((f) => f.rule));
   for (const flag of requiredFlags) {
     content.appendChild(createManualFieldRow(flag.rule, flag.label, flag.reason, true, null));
   }
   for (const rule of ALL_RULE_KEYS) {
     if (requiredRuleKeys.has(rule)) continue;
-    content.appendChild(createManualFieldRow(rule, RULE_LABELS[rule], null, false, record[rule]));
+    const reasonText = (record.ruleReasons || {})[rule] || "";
+    content.appendChild(createManualFieldRow(rule, RULE_LABELS[rule], null, false, record[rule], { textarea, reasonText }));
   }
 
   const commentLabel = document.createElement("div");
   commentLabel.className = "manual-comment-label";
-  commentLabel.textContent = "직접 확인 코멘트 (위에서 NG로 판정하면 필수 - 기존 자동 코멘트에 이어붙습니다):";
+  commentLabel.textContent = "감사 코멘트 (자동 생성됨 - 필요하면 직접 수정할 수 있습니다. 위에서 NG로 판정하면 비어있으면 안 됩니다):";
   content.appendChild(commentLabel);
-
-  const textarea = document.createElement("textarea");
-  textarea.className = "manual-comment-input";
-  textarea.rows = 2;
   content.appendChild(textarea);
 
   tr.appendChild(content);
@@ -755,9 +803,10 @@ function showManualValidationProblems(problems) {
   problems[0].row.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
-// 검증을 통과한 뒤, 사람이 고른 직접확인 판정/코멘트를 실제 record에 합쳐 넣는다. 자동으로
-// 만들어진 코멘트(ngReasons)는 절대 지우지 않고 뒤에 이어붙인다 - 안 그러면 이미 적혀있던
-// 자동 NG 사유(예: 상태 규칙 위반)가 사람이 새로 적은 코멘트로 덮여 사라져버린다.
+// 검증을 통과한 뒤, 사람이 고른 직접확인 판정/코멘트를 실제 record에 합쳐 넣는다. 코멘트
+// textarea는 이제 "추가로 덧붙이는 글"이 아니라 자동 코멘트로 미리 채워진 걸 그대로 쓰거나
+// 직접 고친 최종 코멘트라서, 그대로 덮어쓴다(createManualFieldRow의 change 리스너가 이미
+// 규칙별 자동 사유를 넣고 빼는 걸 처리해뒀다).
 function applyManualInputsToRecords(excludedCilIds) {
   for (const entry of collectManualRowInputs()) {
     if (excludedCilIds.has(entry.cilId)) continue;
@@ -768,10 +817,7 @@ function applyManualInputsToRecords(excludedCilIds) {
       if (info.value === "auto") continue; // 선택 사항인데 안 건드림 - 자동 판정값 그대로 둠
       record[rule] = info.value === "1" ? 1 : info.value === "2" ? 2 : null; // "0"(N/A)과 ""는 둘 다 null
     }
-    if (entry.comment) {
-      const addition = `[직접확인] ${entry.comment}`;
-      record.comment = record.comment ? `${record.comment} / ${addition}` : addition;
-    }
+    record.comment = entry.comment;
   }
 }
 

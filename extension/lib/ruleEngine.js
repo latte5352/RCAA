@@ -476,6 +476,10 @@ export function runAudit(records, options = {}) {
 
     const ngReasons = [];
     const detailNgReasons = [];
+    // 규칙별 사유 텍스트를 따로 들고 있는다 - audit.js가 사람이 특정 규칙만 수동으로 다른
+    // 값으로 바꿨을 때, 그 규칙의 자동 사유만 콕 집어 코멘트에서 빼거나(다시 NG로 돌리면) 다시
+    // 넣을 수 있게 하기 위함(record.comment는 아래에서 이걸 다 합친 것).
+    const ruleReasons = { saveRule: "", versionRule: "", docHistoryRule: "", statusRule: "" };
 
     // 저장 규칙
     const saveResult = checkSaveRule(record);
@@ -483,6 +487,7 @@ export function runAudit(records, options = {}) {
     if (saveResult && !saveResult.ok) {
       ngReasons.push(...saveResult.reasons);
       detailNgReasons.push(...saveResult.detailReasons);
+      ruleReasons.saveRule = saveResult.reasons.join(" / ");
     }
 
     // 버전 규칙 (버전 규칙 + 이벤트성 Create Date + 주기적 Create Date 통합)
@@ -507,6 +512,7 @@ export function runAudit(records, options = {}) {
     if (verNgReasons.length > 0) {
       ngReasons.push(...verNgReasons);
       detailNgReasons.push(...verDetailReasons);
+      ruleReasons.versionRule = verNgReasons.join(" / ");
     }
 
     // 문서 이력 기술 규칙
@@ -515,6 +521,7 @@ export function runAudit(records, options = {}) {
     if (docHistResult && !docHistResult.ok) {
       ngReasons.push(...docHistResult.reasons);
       detailNgReasons.push(...docHistResult.detailReasons);
+      ruleReasons.docHistoryRule = docHistResult.reasons.join(" / ");
     }
     // checkDocHistoryRule이 승인/베이스라인 완료라서 스킵된(N/A) 경우에 한해, collector.js가
     // 미리 확인해둔 "체크포인트 이후 새 버전 설명에 PR 번호가 빠졌거나 NC List에 없는
@@ -578,7 +585,9 @@ export function runAudit(records, options = {}) {
     if (statusNgReasons.length > 0) {
       ngReasons.push(...statusNgReasons);
       detailNgReasons.push(...statusDetailReasons);
+      ruleReasons.statusRule = statusNgReasons.join(" / ");
     }
+    record.ruleReasons = ruleReasons;
 
     // codebeamer로 나가는 간결한 코멘트. NG가 하나도 없으면 비워둔다(원본 C_Audit.py와 동일하게,
     // "이상 없음" 기본값은 이후 반영 단계에서 채운다 - D_Result_Update 상당 로직 참고). 다만

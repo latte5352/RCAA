@@ -645,6 +645,26 @@ document.getElementById("logoutBtn").addEventListener("click", async () => {
   await refreshView();
 });
 
+// 감사 결과 창은 side panel(popup.html)과 같은 확장 origin이라, 기본적으로 Chrome의 줌
+// 레벨이 origin 단위로 저장돼서 한쪽에서 Ctrl +/-로 줌을 바꾸면 다른 쪽도 같이 바뀐다 - 감사
+// 결과 창의 탭 줌 범위를 "이 탭만"으로 바꿔서 서로 안 엮이게 한다. 줌 API는 매니페스트 권한이
+// 따로 필요 없다.
+function openAuditWindow(url) {
+  chrome.windows.create({ url, type: "popup", width: 1000, height: 750 }, (win) => {
+    const tabId = win?.tabs?.[0]?.id;
+    if (tabId == null) return;
+    // windows.create 콜백 시점엔 아직 audit.html로의 첫 네비게이션이 안 끝나있어서, 여기서
+    // 바로 setZoomSettings를 걸어도 그 직후 네비게이션이 완료되면서 Chrome이 per-tab 설정을
+    // 도로 per-origin으로 초기화해버린다 - 그 탭의 로딩이 끝난 뒤에 걸어야 유지된다.
+    const onUpdated = (updatedTabId, changeInfo) => {
+      if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.setZoomSettings(tabId, { scope: "per-tab" });
+    };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
 viewLastBtn.addEventListener("click", async () => {
   const credentials = await getCredentials();
   if (!credentials) {
@@ -654,12 +674,7 @@ viewLastBtn.addEventListener("click", async () => {
   if (!selectedProjectName) return;
 
   const params = new URLSearchParams({ project: selectedProjectName, mode: "view" });
-  chrome.windows.create({
-    url: chrome.runtime.getURL(`audit.html?${params.toString()}`),
-    type: "popup",
-    width: 1000,
-    height: 750,
-  });
+  openAuditWindow(chrome.runtime.getURL(`audit.html?${params.toString()}`));
   stepEl.textContent = "직전 감사 결과 창을 열었습니다.";
 });
 
@@ -677,12 +692,7 @@ function startNewAudit() {
   if (isPartialSelection) {
     params.set("onlyTrackers", JSON.stringify(Array.from(selectedTrackerNames)));
   }
-  chrome.windows.create({
-    url: chrome.runtime.getURL(`audit.html?${params.toString()}`),
-    type: "popup",
-    width: 1000,
-    height: 750,
-  });
+  openAuditWindow(chrome.runtime.getURL(`audit.html?${params.toString()}`));
   stepEl.textContent = isPartialSelection
     ? `검토 창을 열었습니다 (선택한 트래커 ${selectedTrackerNames.size}개만 감사).`
     : "검토 창을 열었습니다.";
