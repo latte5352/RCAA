@@ -41,6 +41,8 @@ const manualStatusCheckWrap = document.getElementById("manualStatusCheckWrap");
 const manualStatusCheckList = document.getElementById("manualStatusCheckList");
 const docHistoryManualCheckWrap = document.getElementById("docHistoryManualCheckWrap");
 const docHistoryManualCheckList = document.getElementById("docHistoryManualCheckList");
+const crIdManualCheckWrap = document.getElementById("crIdManualCheckWrap");
+const crIdManualCheckList = document.getElementById("crIdManualCheckList");
 const noTrackerManualCheckWrap = document.getElementById("noTrackerManualCheckWrap");
 const noTrackerManualCheckList = document.getElementById("noTrackerManualCheckList");
 const unregisteredReferenceFilesWrap = document.getElementById("unregisteredReferenceFilesWrap");
@@ -77,6 +79,7 @@ let warningsData = {
   incompleteFetchTrackers: [],
   manualStatusCheckTrackers: [],
   docHistoryManualCheckTrackers: [],
+  crIdManualCheckTrackers: [],
   noTrackerManualCheckTrackers: [],
   fetchFailedTrackers: [],
 };
@@ -194,6 +197,14 @@ function getManualCheckFlags(record) {
   );
   if (docHistEntry) {
     flags.push({ rule: "docHistoryRule", label: "이력", reason: docHistEntry.reason });
+  }
+  // CR 기재 확인도 PR과 같은 codebeamer 필드(이력)를 강제 대상으로 삼는다 - 둘 다 "문서 이력
+  // 기술 규칙"의 증거라서, 둘 중 하나라도 걸리면 이력 규칙을 직접 판정해야 한다.
+  const crIdEntry = (warningsData.crIdManualCheckTrackers || []).find(
+    (t) => t.trackerName === record.trackerName
+  );
+  if (crIdEntry) {
+    flags.push({ rule: "docHistoryRule", label: "이력", reason: crIdEntry.reason });
   }
   // Source Code처럼 codebeamer에 연결된 트래커 자체가 없는 산출물(noTrackerManualCheckTrackers) -
   // 상태 규칙은 리뷰레포트 개념 자체가 없어 그냥 N/A로 두고, 나머지 세 규칙만 강제한다.
@@ -619,6 +630,7 @@ function renderWarnings(data) {
     incompleteFetchTrackers = [],
     manualStatusCheckTrackers = [],
     docHistoryManualCheckTrackers = [],
+    crIdManualCheckTrackers = [],
     noTrackerManualCheckTrackers = [],
     fetchFailedTrackers = [],
     unregisteredReferenceFiles = [],
@@ -717,6 +729,33 @@ function renderWarnings(data) {
       return row;
     });
     docHistoryManualCheckWrap.classList.remove("hidden");
+  }
+  if (crIdManualCheckTrackers.length) {
+    renderWarnList(crIdManualCheckList, crIdManualCheckTrackers, (f) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const name = document.createElement("div");
+      name.textContent = f.trackerName;
+      row.appendChild(name);
+      const reason = document.createElement("div");
+      reason.className = "version-fail-reason";
+      reason.textContent = f.reason;
+      row.appendChild(reason);
+      if (f.paItemId) {
+        const link = document.createElement("a");
+        link.className = "version-fail-link";
+        link.href = `https://codebeamer.slworld.com/cb/issue/${f.paItemId}`;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "🔗 대상 산출물에서 직접 확인";
+        const linksRow = document.createElement("div");
+        linksRow.className = "version-fail-links";
+        linksRow.appendChild(link);
+        row.appendChild(linksRow);
+      }
+      return row;
+    });
+    crIdManualCheckWrap.classList.remove("hidden");
   }
   if (noTrackerManualCheckTrackers.length) {
     renderWarnList(noTrackerManualCheckList, noTrackerManualCheckTrackers, (name) => simpleRow(name));
@@ -942,7 +981,7 @@ async function retryTrackers(namesToRetry, { replaceExisting, button, idleLabel 
 
     const {
       records: auditedRecords, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers,
-      docHistoryManualCheckTrackers, noTrackerManualCheckTrackers,
+      docHistoryManualCheckTrackers, crIdManualCheckTrackers, noTrackerManualCheckTrackers,
     } = runAudit(auditRecords, { cadence, anchor, periodicTrackers: PERIODIC_TRACKERS });
     auditRecords = auditedRecords;
 
@@ -954,7 +993,7 @@ async function retryTrackers(namesToRetry, { replaceExisting, button, idleLabel 
       newTrackers: [...(warningsData.newTrackers || []), ...newTrackers],
       changedTrackers: [...(warningsData.changedTrackers || []), ...changedTrackers],
       versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers,
-      docHistoryManualCheckTrackers, noTrackerManualCheckTrackers,
+      docHistoryManualCheckTrackers, crIdManualCheckTrackers, noTrackerManualCheckTrackers,
       fetchFailedTrackers: stillFailed,
     };
 
@@ -1014,7 +1053,7 @@ async function runNewAudit(client, username) {
   setProgress(60, "감사 규칙 검사 중...");
   const {
     records: auditedRecords, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers, docHistoryManualCheckTrackers,
-    noTrackerManualCheckTrackers, unregisteredReferenceFiles,
+    crIdManualCheckTrackers, noTrackerManualCheckTrackers, unregisteredReferenceFiles,
   } = runAudit(records, {
     cadence, anchor, periodicTrackers: PERIODIC_TRACKERS,
   });
@@ -1025,7 +1064,7 @@ async function runNewAudit(client, username) {
 
   warningsData = {
     newTrackers, changedTrackers, versionCheckFailures, incompleteFetchTrackers,
-    manualStatusCheckTrackers, docHistoryManualCheckTrackers, noTrackerManualCheckTrackers, fetchFailedTrackers,
+    manualStatusCheckTrackers, docHistoryManualCheckTrackers, crIdManualCheckTrackers, noTrackerManualCheckTrackers, fetchFailedTrackers,
     unregisteredReferenceFiles,
   };
 

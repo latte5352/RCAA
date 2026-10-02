@@ -255,12 +255,14 @@ export function checkDocHistoryRule(record) {
   const status = record.status;
   if (FINALIZED_STATUSES.has(status)) {
     // 이미 승인/베이스라인 끝났어도, "마지막으로 확인해서 문제없었던 지점" 이후 새로 생긴
-    // 버전들에 PR 기재가 빠진 게 없으면 OK로 처리한다(collector.js의
-    // findDocHistoryManualCheckReason이 미리 계산해둔 결과). 빠진 게 있으면 PR이 꼭
-    // 필요없는 경우일 수도 있어 자동으로 NG를 매기지 않고 N/A로 남긴 채, runAudit이 별도
-    // "직접 확인 필요" 목록에 올린다 - 고쳐지기 전까지는 체크포인트가 전진하지 않아 계속
-    // 안내된다.
-    return record.docHistoryManualCheckReason ? null : { ok: true, reasons: [], detailReasons: [] };
+    // 버전들에 PR/CR 기재가 빠진 게 없으면 OK로 처리한다(collector.js의
+    // findDocHistoryManualCheckReasons이 미리 계산해둔 결과). 둘 중 하나라도 빠진 게 있으면
+    // PR/CR이 꼭 필요없는 경우일 수도 있어 자동으로 NG를 매기지 않고 N/A로 남긴 채, runAudit이
+    // 별도 "직접 확인 필요" 목록(들)에 올린다 - 고쳐지기 전까지는 체크포인트가 전진하지 않아
+    // 계속 안내된다.
+    return (record.docHistoryManualCheckReason || record.crIdManualCheckReason)
+      ? null
+      : { ok: true, reasons: [], detailReasons: [] };
   }
 
   // 개발 중이라 다시 Open된 경우, 이번에 손댄 내용을 아직 새 버전(baseline)으로 안 올렸으면
@@ -428,7 +430,7 @@ export function checkReviewReportVersionRule(record, nameIndex) {
  * (1=OK, 2=NG, null=대상 아님)과 comment(간결한 사유, codebeamer 전송용),
  * detailComment(상세 사유 배열)를 채워 넣는다.
  *
- * @returns {{records, versionCheckFailures: Array<{trackerName, reason, targetPaItemId, reviewReportPaItemId}>, incompleteFetchTrackers: string[], manualStatusCheckTrackers: string[], docHistoryManualCheckTrackers: Array<{trackerName, reason, paItemId}>, noTrackerManualCheckTrackers: string[], unregisteredReferenceFiles: string[]}}
+ * @returns {{records, versionCheckFailures: Array<{trackerName, reason, targetPaItemId, reviewReportPaItemId}>, incompleteFetchTrackers: string[], manualStatusCheckTrackers: string[], docHistoryManualCheckTrackers: Array<{trackerName, reason, paItemId}>, crIdManualCheckTrackers: Array<{trackerName, reason, paItemId}>, noTrackerManualCheckTrackers: string[], unregisteredReferenceFiles: string[]}}
  */
 export function runAudit(records, options = {}) {
   const {
@@ -442,6 +444,7 @@ export function runAudit(records, options = {}) {
   const incompleteFetchTrackers = [];
   const manualStatusCheckTrackers = [];
   const docHistoryManualCheckTrackers = [];
+  const crIdManualCheckTrackers = [];
   // ITEM_LIST_ENTRIES_WITHOUT_TRACKER 중에서도 NO_TRACKER_FORCE_MANUAL_RULES에 있는 이름(예:
   // Source Code)은, 상태 규칙은 그냥 N/A로 두되(리뷰레포트 개념 자체가 없음) 저장/버전/문서이력
   // 규칙은 사람이 직접 입력하지 않으면 반영을 막아야 한다 - audit.js가 이 목록을 보고 강제
@@ -539,6 +542,15 @@ export function runAudit(records, options = {}) {
         paItemId: record.paItemId,
       });
     }
+    // CR 번호 확인(Gate Baselined 이후부터 적용)도 같은 조건(승인/베이스라인 완료라 자동
+    // 판정 불가)일 때만, PR과는 별개의 안내 목록에 올린다.
+    if (docHistResult === null && FINALIZED_STATUSES.has(record.status) && record.crIdManualCheckReason) {
+      crIdManualCheckTrackers.push({
+        trackerName: record.trackerName,
+        reason: record.crIdManualCheckReason,
+        paItemId: record.paItemId,
+      });
+    }
 
     // 상태 규칙 (상태 규칙 + 리뷰 대상 버전 규칙 통합 - 같은 codebeamer 필드로 반영됨)
     let statusChecked = false;
@@ -621,6 +633,6 @@ export function runAudit(records, options = {}) {
   return {
     records: records.filter((r) => !(r.isReferenceFile && !r.referenceFileRegistered)),
     versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers, docHistoryManualCheckTrackers,
-    noTrackerManualCheckTrackers, unregisteredReferenceFiles,
+    crIdManualCheckTrackers, noTrackerManualCheckTrackers, unregisteredReferenceFiles,
   };
 }

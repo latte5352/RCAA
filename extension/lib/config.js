@@ -7,6 +7,9 @@ export const PROJ_BASE_URL = "https://codebeamer.slworld.com/cb/proj";
 export const CM_ROLE_NAME = "CM";
 export const TRACKER_NAME_CIL = "[SUP.8]Configuration Item List";
 export const TRACKER_NAME_NCL = "[SUP.9]Non-Conformance List";
+// PR과 마찬가지로 "Gate Baseline이 된 이후 버전 이력에 CR 번호가 적혀있는지"를 대조할 때 쓴다 -
+// 이 트래커 항목의 cRID 필드(예: "CR-8")에서 번호만 뽑아 유효한 CR 번호 집합을 만든다.
+export const TRACKER_NAME_CHANGE_REQUEST = "[SUP.10]Change Request";
 // CIL과 별개로, 일부 프로젝트는 차종 코드 등 정해진 이름 형식이 없는 참고 문서(예: CAN DATA,
 // 차량 일반 요구사항 등)를 CIL 대신 이 트래커에 등재한다. 프로젝트에 이 트래커가 없으면 그냥
 // 없는 것으로 취급한다(CIL과 달리 필수가 아님).

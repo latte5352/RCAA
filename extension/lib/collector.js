@@ -5,7 +5,7 @@
 import { mapWithConcurrency } from "./codebeamerClient.js";
 import { parseBaselineData, buildLatestBaselines, buildAllBaselinesByTracker } from "./baselines.js";
 import { extractTargetVersionFromComment, isDateBasedTracker, stripTrailingQualifier, normalizeNameForRowMatch, extractProcessTag, matchConfiguredSuffix, toYYMMDD } from "./wikiTable.js";
-import { TRACKERS_EXEMPT_FROM_ITEM_LIST, ITEM_LIST_ENTRIES_WITHOUT_TRACKER, ITEM_LIST_ENTRIES_EXCLUDED_FROM_AUDIT, STATUS_NAME_ALIASES, REVIEW_REPORT_ADDITIONAL_TARGETS, TRACKER_NAME_REFERENCE_DOC_LIST } from "./config.js";
+import { TRACKERS_EXEMPT_FROM_ITEM_LIST, ITEM_LIST_ENTRIES_WITHOUT_TRACKER, ITEM_LIST_ENTRIES_EXCLUDED_FROM_AUDIT, STATUS_NAME_ALIASES, REVIEW_REPORT_ADDITIONAL_TARGETS, TRACKER_NAME_REFERENCE_DOC_LIST, TRACKER_NAME_CHANGE_REQUEST } from "./config.js";
 
 // codebeamer에서 읽어온 상태명이 표준 영어명이 아닌 다른 이름(예: 한글 "승인됨")이면
 // 규칙 엔진이 인식하는 영어명으로 바꾼다 (STATUS_NAME_ALIASES 참고).
@@ -80,6 +80,9 @@ export function suggestTemplateTracker(targetName, candidateTrackers) {
 // 이내에 오는 숫자만 PR 번호로 인식 - 그 이유는 ruleEngine.js 쪽 주석 참고) - 여기서는 규칙
 // 판정이 아니라 "문서 이력에 PR 번호가 있는지" 확인용으로 쓴다.
 const PR_IN_DESC_RE = /\bPR[\s:\-~]{0,3}(\d+)/gi;
+// CR도 같은 패턴으로 찾는다(예: "CR-8", "CR~-8") - Change Request 트래커의 cRID 필드값
+// ("CR-8")에서 뽑은 번호와 대조한다.
+const CR_IN_DESC_RE = /\bCR[\s:\-~]{0,3}(\d+)/gi;
 
 /**
  * checkDocHistoryRule(ruleEngine.js)이 승인/베이스라인 완료 상태라 원래 방식(현재 열려있는
@@ -97,9 +100,19 @@ const PR_IN_DESC_RE = /\bPR[\s:\-~]{0,3}(\d+)/gi;
  * 승인은 문제를 고쳐서 된 게 아니라 처음 공식화된 것뿐이라 PR을 적을 이유가 없다(예: 1.0
  * (Approved)가 이 트래커의 baseline 이력 중 첫 baseline이자 첫 승인인 경우, 체크포인트가
  * 없어서 "최신 것 하나만 본다" 폴백에 걸리더라도 1.0은 보지 않는다).
+ *
+ * CR 번호는 PR과 별도 기준으로, 별도의 안내 목록("CR 기재 확인 필요")에 올리려고 사유도
+ * 따로 반환한다({prReason, crReason}). "한 번이라도 Gate Baselined가 된 적 있는지"는 baseline
+ * 이름(versionType)만으로는 구분이 안 돼서(Approved/Internal Baselined/Gate Baselined 전부
+ * 그냥 "(Approved)"로만 찍힘), PA 아이템의 workflow 이력(/history, Gate Baselined로의 상태
+ * 전이)에서 그 전이가 처음 일어난 시각(firstGateBaselineIso)을 따로 받아서, 그 시각 이후에
+ * 생긴 baseline만 CR 번호가 있는지 본다 - PR과 달리 "처음 Gate Baseline이 되는 baseline"
+ * 자체부터 바로 CR이 있어야 한다(그 전이 자체가 CR에 의한 변경 반영이므로, PR의 "최초 승인은
+ * 예외" 같은 유예가 없다).
+ * @returns {{prReason: string|null, crReason: string|null}}
  */
-function findDocHistoryManualCheckReason(allBaselines, checkpointVersion, validPrNumbers) {
-  if (!allBaselines || allBaselines.length === 0) return null;
+function findDocHistoryManualCheckReasons(allBaselines, checkpointVersion, validPrNumbers, validCrNumbers, firstGateBaselineIso) {
+  if (!allBaselines || allBaselines.length === 0) return { prReason: null, crReason: null };
 
   const firstApprovedIndex = allBaselines.findIndex((b) => (b.versionType || "").includes("Approved"));
 
@@ -118,7 +131,8 @@ function findDocHistoryManualCheckReason(allBaselines, checkpointVersion, validP
   }
 
   const newBaselines = allBaselines.slice(sinceIndex);
-  const reasons = [];
+  const prReasons = [];
+  const crReasons = [];
   for (const b of newBaselines) {
     const desc = b.description || "";
     const prNums = [];
@@ -127,15 +141,34 @@ function findDocHistoryManualCheckReason(allBaselines, checkpointVersion, validP
     while ((m = PR_IN_DESC_RE.exec(desc)) !== null) prNums.push(m[1]);
 
     if (prNums.length === 0) {
-      reasons.push(`버전 ${b.version ?? "?"} 설명에 PR 번호가 적혀있지 않음`);
-      continue;
+      prReasons.push(`버전 ${b.version ?? "?"} 설명에 PR 번호가 적혀있지 않음`);
+    } else {
+      const invalid = prNums.filter((n) => !validPrNumbers.has(n));
+      if (invalid.length > 0) {
+        prReasons.push(`버전 ${b.version ?? "?"} 설명에 적힌 PR 번호(${invalid.join(", ")})가 NC List에서 확인되지 않음`);
+      }
     }
-    const invalid = prNums.filter((n) => !validPrNumbers.has(n));
-    if (invalid.length > 0) {
-      reasons.push(`버전 ${b.version ?? "?"} 설명에 적힌 PR 번호(${invalid.join(", ")})가 NC List에서 확인되지 않음`);
+
+    if (firstGateBaselineIso && b.createdAt && b.createdAt >= firstGateBaselineIso) {
+      const crNums = [];
+      CR_IN_DESC_RE.lastIndex = 0;
+      let cm;
+      while ((cm = CR_IN_DESC_RE.exec(desc)) !== null) crNums.push(cm[1]);
+
+      if (crNums.length === 0) {
+        crReasons.push(`버전 ${b.version ?? "?"} 설명에 CR 번호가 적혀있지 않음`);
+      } else {
+        const invalidCr = crNums.filter((n) => !validCrNumbers.has(n));
+        if (invalidCr.length > 0) {
+          crReasons.push(`버전 ${b.version ?? "?"} 설명에 적힌 CR 번호(${invalidCr.join(", ")})가 Change Request에서 확인되지 않음`);
+        }
+      }
     }
   }
-  return reasons.length > 0 ? reasons.join(" / ") : null;
+  return {
+    prReason: prReasons.length > 0 ? prReasons.join(" / ") : null,
+    crReason: crReasons.length > 0 ? crReasons.join(" / ") : null,
+  };
 }
 
 // ── CIL 파싱 ────────────────────────────────────────────────────────────────
@@ -515,6 +548,23 @@ async function processTrackerRow(client, mergedRow, ctx) {
     paHistory = await client.getJson(`https://codebeamer.slworld.com/cb/rest/item/${paId}/history`);
   }
 
+  // CR 번호 확인 기준점 - 이 PA 아이템이 "Gate Baselined" 상태로 처음 전이된 시각. baseline
+  // 이름만으론 Approved/Internal Baselined/Gate Baselined를 구분 못 해서(전부 "(Approved)"),
+  // 실제 상태 전이 이력(변경 필드가 "status"이고 새 값이 "Gate Baselined")에서 직접 찾는다.
+  // paHistory는 오래된 것부터 순서대로 오므로 처음 찾은 게 가장 이른 시점이다.
+  let firstGateBaselineIso = null;
+  if (Array.isArray(paHistory)) {
+    for (const entry of paHistory) {
+      const statusChange = (entry.changes || []).find(
+        (c) => c.field === "status" && (c.newValue || {}).name === "Gate Baselined"
+      );
+      if (statusChange) {
+        firstGateBaselineIso = entry.submittedAt;
+        break;
+      }
+    }
+  }
+
   const tType = (tracker.type || {}).name || "";
   const base = ctx.latestBaselines.get(tName) || {};
 
@@ -539,6 +589,16 @@ async function processTrackerRow(client, mergedRow, ctx) {
     const lastTransition = paHistory[paHistory.length - 1].transition || {};
     hInfo.createDateCurrent = lastTransition.name === "back";
   }
+
+  const { prReason: docHistoryManualCheckReason, crReason: crIdManualCheckReason } = findDocHistoryManualCheckReasons(
+    ctx.allBaselinesByTracker.get(tName),
+    // 이름으로 먼저 찾고, 없으면(트래커명이 바뀐 경우) ID로 찾은 체크포인트로 대체한다 -
+    // 이름 변경만으로 "지금까지 확인한 지점"을 잃어버려 처음부터 다시 확인하지 않도록.
+    ctx.docHistoryCheckpoints[tName] ?? ctx.docHistoryCheckpointsById[trackerId],
+    ctx.validPrNumbers,
+    ctx.validCrNumbers,
+    firstGateBaselineIso
+  );
 
   return {
     cilId: mergedRow.cilId,
@@ -572,13 +632,8 @@ async function processTrackerRow(client, mergedRow, ctx) {
     isEventBased: await ctx.isEventbasedWorkflow(uri),
     testResultClosedDate: dateBasedClosedDate,
     itemFetchIncomplete,
-    docHistoryManualCheckReason: findDocHistoryManualCheckReason(
-      ctx.allBaselinesByTracker.get(tName),
-      // 이름으로 먼저 찾고, 없으면(트래커명이 바뀐 경우) ID로 찾은 체크포인트로 대체한다 -
-      // 이름 변경만으로 "지금까지 확인한 지점"을 잃어버려 처음부터 다시 확인하지 않도록.
-      ctx.docHistoryCheckpoints[tName] ?? ctx.docHistoryCheckpointsById[trackerId],
-      ctx.validPrNumbers
-    ),
+    docHistoryManualCheckReason,
+    crIdManualCheckReason,
     // 문서 이력 기술 규칙(PR 기재 확인)은 이 트래커가 한 번이라도 승인/베이스라인까지 간
     // 적이 있어야 적용한다 - 첫 승인 전 초기 버전들(1.0, 1.1 등)은 아직 정식 PR 추적
     // 대상이 아니라서, 그 이전 버전 설명에 PR이 없다고 잡으면 안 된다는 확인에 따른 것.
@@ -772,9 +827,25 @@ export async function collectAuditData(client, { projectName, trackerCil, tracke
     // prMap = buildNclPrMap(allRelations.flat());
   }
 
+  // Change Request(CR 매칭) - PR과 같은 방식으로, "실제 존재하는 CR 번호" 집합만 만든다.
+  // 이 트래커 목록 조회 결과엔 cRID 커스텀 필드(예: "CR-8")가 항목별로 이미 포함돼 있어서
+  // (실데이터로 확인함), NCL처럼 개별 아이템을 추가로 조회할 필요가 없다.
+  const crTracker = allTrackers.find((t) => t.name === TRACKER_NAME_CHANGE_REQUEST);
+  const validCrNumbers = new Set();
+  if (crTracker) {
+    onProgress?.({ phase: "Change Request 항목 조회 중..." });
+    const crItemsResult = await client.fetchAllItems(`${client.baseUrl}${crTracker.uri}/items`, {
+      onPage: (page, itemCount) => onProgress?.({ phase: `Change Request 항목 조회 중... (${itemCount}건)` }),
+    });
+    for (const item of crItemsResult.items) {
+      const m = /(\d+)/.exec(item.cRID || "");
+      if (m) validCrNumbers.add(m[1]);
+    }
+  }
+
   onProgress?.({ phase: `감사 대상 트래커 ${targetRows.length}개 조회 시작...` });
   const isEventbasedWorkflow = makeEventBasedChecker(client);
-  const ctx = { reviewReportUriMap, latestBaselines, allBaselinesByTracker, docHistoryCheckpoints, docHistoryCheckpointsById, validPrNumbers, isEventbasedWorkflow };
+  const ctx = { reviewReportUriMap, latestBaselines, allBaselinesByTracker, docHistoryCheckpoints, docHistoryCheckpointsById, validPrNumbers, validCrNumbers, isEventbasedWorkflow };
 
   // processTrackerRow 안의 client.getJson/putJson은 순수 네트워크 오류(fetch 자체 실패 -
   // HTTP 에러 코드가 아니라 연결이 끊긴 경우)를 못 잡고 그대로 던진다. 트래커 하나가 이렇게
