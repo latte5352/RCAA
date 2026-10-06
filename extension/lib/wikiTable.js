@@ -3,43 +3,12 @@
 // 여기 있는 정규식/로직은 실데이터로 여러 번 고친 것들이라 함부로 바꾸지 말 것 -
 // 바꿀 일이 생기면 원본 Python 쪽 이력(git log)도 같이 확인해서 옮길 것.
 
-const TABLE_TOKEN_RE = /\[\{Table|\}\]/g;
-const OPEN_TABLE_RE = /\[\{Table/g;
 const TRAILING_QUALIFIER_RE = /(\s*\([^)]*\))+$/; // 이름 끝의 "(MCU)", "(AP)(BSP)" 같은 한정자
 const PROCESS_TAG_RE = /^\[[A-Z]+\.\d+[A-Z]?\]/; // [SAF.2]Functional Safety Audit Report -> [SAF.2]
 const VALUE_SPAN_RE = /%%\(color:rgb\([^)]*\)[^)]*\)([^%]+)%!/g;
 const VERSION_FULLMATCH_RE = /^v?\d+(\.\d+)+$/i;
 const DATE_FULLMATCH_RE = /^\d{6}$/;
 const DATE_BASED_TRACKER_SUFFIXES = ["Test Result", "Review Result"];
-
-/**
- * markerPos를 포함하는 최상위 [{Table ... }] 블록의 [시작, 끝] 인덱스를 찾는다.
- * 표 안에 표가 중첩된 경우(예: 대상 문서명 셀 안에 또 표가 있는 경우)까지 고려해
- * 괄호 깊이를 세어 정확한 끝 지점을 찾는다.
- * @returns {[number, number] | null}
- */
-function findEnclosingTable(commentText, markerPos) {
-  const before = commentText.slice(0, markerPos);
-  OPEN_TABLE_RE.lastIndex = 0;
-  let openPositions = [];
-  let m;
-  while ((m = OPEN_TABLE_RE.exec(before)) !== null) {
-    openPositions.push(m.index);
-  }
-  if (openPositions.length === 0) return null;
-  const tableStart = openPositions[openPositions.length - 1];
-
-  let depth = 0;
-  TABLE_TOKEN_RE.lastIndex = tableStart;
-  let match;
-  while ((match = TABLE_TOKEN_RE.exec(commentText)) !== null) {
-    depth += match[0] === "[{Table" ? 1 : -1;
-    if (depth === 0) {
-      return [tableStart, match.index + match[0].length];
-    }
-  }
-  return null; // 닫히지 않은 표 (형식 이상)
-}
 
 function stripProcessTag(name) {
   return (name || "").replace(PROCESS_TAG_RE, "").trim();
@@ -123,8 +92,12 @@ function stripStyleWrappers(text) {
 // 구분되므로, 빈 줄 단위로 나눈 뒤 각 줄을 셀로 파싱해서 "이름 칼럼들 + 마지막 버전 칼럼"
 // 형태로 다시 조립한다. extractTargetVersionFromComment가 %% 스팬으로 못 찾았을 때만
 // 보조로 시도한다(기존에 이미 %%로 되던 표는 그대로 두고, 이 표기법만 쓰는 표를 추가 대응).
-function extractTargetVersionFromCellStyledTable(section, targetNorm) {
-  const rows = section.split(/\r?\n\s*\r?\n/);
+// 대상 산출물명과 일치하는 행이 코멘트 전체에 몇 번이나 나오는지 세야 해서(아래
+// extractTargetVersionFromComment 참고), 첫 매칭에서 멈추지 않고 전부 모아서 값 문자열
+// 배열로 반환한다.
+function collectCellStyledMatches(commentText, targetNorm) {
+  const matches = [];
+  const rows = commentText.split(/\r?\n\s*\r?\n/);
   for (const row of rows) {
     const cells = [];
     for (const rawLine of row.split(/\r?\n/)) {
@@ -143,88 +116,75 @@ function extractTargetVersionFromCellStyledTable(section, targetNorm) {
     if (cells.length < 2) continue;
     const nameText = cells.slice(0, -1).join(" ");
     if (!normalizeNameForRowMatch(nameText).includes(targetNorm)) continue;
-    const value = cells[cells.length - 1].trim();
-    if (VERSION_FULLMATCH_RE.test(value) || DATE_FULLMATCH_RE.test(value)) {
-      return { value: value.replace(/^[vV]+/, ""), failReason: null };
-    }
-    return { value: null, failReason: `'${value}' 형식을 인식하지 못함` };
+    matches.push(cells[cells.length - 1].trim());
   }
-  return null; // 이 표에서는 못 찾음 - 호출부가 기존 실패 사유로 처리
+  return matches;
+}
+
+// 코멘트 하나(단일 wiki 텍스트) 안에서 산출물명과 일치하는 행의 값들을 전부 모은다. %% 인라인
+// 스팬 방식을 먼저 시도하고, 그걸로 하나도 못 찾았을 때만 셀 스타일 방식을 보조로 시도한다(둘은
+// 대체 수단 관계 - 같은 행이 우연히 둘 다에 걸려서 중복으로 잘못 세는 걸 막기 위함. 실제로 "셀
+// 자체도 색이 입혀져 있고 그 안에 %% 스팬도 또 있는" 행이 있어서 실데이터로 확인됨).
+function collectMatchesFromOneComment(commentText, targetNorm) {
+  const valueSpanMatches = [];
+  VALUE_SPAN_RE.lastIndex = 0;
+  const valueSpans = [...commentText.matchAll(VALUE_SPAN_RE)];
+  let prevEnd = 0;
+  for (const m of valueSpans) {
+    const nameChunk = commentText.slice(prevEnd, m.index);
+    prevEnd = m.index + m[0].length;
+    if (normalizeNameForRowMatch(nameChunk).includes(targetNorm)) {
+      // Python의 .strip().strip("\\").strip()과 동일: 양끝 공백 -> 양끝 백슬래시 -> 양끝 공백
+      valueSpanMatches.push(m[1].trim().replace(/^\\+/, "").replace(/\\+$/, "").trim());
+    }
+  }
+  return valueSpanMatches.length > 0 ? valueSpanMatches : collectCellStyledMatches(commentText, targetNorm);
 }
 
 /**
- * Review Report PA 아이템의 코멘트(자유 텍스트 Wiki 표)에서 "리뷰 대상 문서명" 표에 적힌
- * trackerName과 같은 행(row)의 값(버전, 또는 Test Result의 경우 대상 완료일 YYMMDD 6자리)을
- * 추출한다. 하나의 Review Report가 대상 산출물을 2개 이상(예: Test Result 실행 결과 + 별도
- * Test Report 문서) 같이 다루는 경우가 있어서, 표에 적힌 값 아무거나 줍는 게 아니라 행 단위로
- * 문서명을 매칭해 정확히 짝을 맞춰야 한다.
+ * Review Report PA 아이템의 코멘트들(자유 텍스트 Wiki 표 - PA 아이템 하나에 코멘트가 여러 개
+ * 달릴 수 있음)에서 trackerName과 같은 행(row)의 값(버전, 또는 Test Result의 경우 대상
+ * 완료일 YYMMDD 6자리)을 추출한다. "대상"이라는 글자가 들어간 표로 범위를 좁히지 않고 각
+ * 코멘트 전체에서 찾는다 - 리뷰 리포트 코멘트엔 대상 산출물과 참조 산출물 표밖에 없고, 같은
+ * 산출물이 대상과 참조 양쪽에 동시에 등재되는 일은 없는 게 정상이라(확인됨), 코멘트들을
+ * 통틀어 이름이 일치하는 행이 정확히 하나면 그걸 쓰면 된다. 다만 혹시라도 같은 산출물명이
+ * 2번 이상 나오면(원래는 없어야 하는 경우) 아무거나 줍지 않고 사람이 직접 확인하게 한다.
+ * 하나의 Review Report가 대상 산출물을 2개 이상(예: Test Result 실행 결과 + 별도 Test Report
+ * 문서) 같이 다루는 경우가 있어서, 표에 적힌 값 아무거나 줍는 게 아니라 행 단위로 문서명을
+ * 매칭해 정확히 짝을 맞춰야 한다.
  *
+ * 코멘트를 하나로 합친 문자열이 아니라 배열로 받는다 - 코멘트끼리 공백 하나로만 이어붙이면
+ * (예: 한 코멘트의 표 닫는 "}]" 바로 뒤에 다른 코멘트의 평문이 따라붙어), 범위 제한이 없어진
+ * 지금 로직이 서로 다른 코멘트의 내용을 한 덩어리로 잘못 묶어 엉뚱한 값을 만들 수 있다 -
+ * 코멘트 하나하나를 따로 파싱해야 이 문제가 안 생긴다.
+ * @param {string[]} commentTexts
  * @returns {{value: string|null, failReason: string|null}}
  */
-function extractTargetVersionFromComment(commentText, trackerName) {
-  if (!commentText) {
+function extractTargetVersionFromComment(commentTexts, trackerName) {
+  const texts = (commentTexts || []).filter(Boolean);
+  if (texts.length === 0) {
     return { value: null, failReason: "리뷰 코멘트가 비어있음" };
   }
-
-  // 표 제목이 "리뷰 대상 문서명"/"리뷰 대상 문서"/"리뷰 대상" 등 작성자마다 수기로 다르게
-  // 적혀있어서, 정확한 문구 대신 공통으로 들어가는 "대상"만 찾는다. 자유 텍스트 중에 "대상"이
-  // 표 밖에서 먼저 나올 수도 있으니, 표([{Table ... }]) 안에 있는 것을 찾을 때까지 등장 위치를
-  // 순서대로 시도한다.
-  const markerPositions = [];
-  const markerRe = /대상/g;
-  let mm;
-  while ((mm = markerRe.exec(commentText)) !== null) {
-    markerPositions.push(mm.index);
-  }
-  if (markerPositions.length === 0) {
-    return { value: null, failReason: "'대상' 표를 찾을 수 없음" };
-  }
-
-  let tableBounds = null;
-  for (const pos of markerPositions) {
-    tableBounds = findEnclosingTable(commentText, pos);
-    if (tableBounds !== null) break;
-  }
-  if (tableBounds === null) {
-    return { value: null, failReason: "표 구조를 인식하지 못함" };
-  }
-  const section = commentText.slice(tableBounds[0], tableBounds[1]);
 
   const targetNorm = normalizeNameForRowMatch(stripTrailingQualifier(stripProcessTag(trackerName)));
   if (!targetNorm) {
     return { value: null, failReason: "대상 트래커명을 알 수 없음" };
   }
 
-  // codebeamer Wiki 서식: %%(color:rgb(r,g,b);...)내용%! 형태로 셀 내용(버전/날짜)만 색이
-  // 입혀져 있고, 문서명은 그 앞에 일반 텍스트로 적혀있다 (표 한 행 = 문서명 + 색 입힌 값)
-  VALUE_SPAN_RE.lastIndex = 0;
-  const valueSpans = [...section.matchAll(VALUE_SPAN_RE)];
-  if (valueSpans.length > 0) {
-    let prevEnd = 0;
-    for (const m of valueSpans) {
-      const nameChunk = section.slice(prevEnd, m.index);
-      prevEnd = m.index + m[0].length;
-      if (normalizeNameForRowMatch(nameChunk).includes(targetNorm)) {
-        // Python의 .strip().strip("\\").strip()과 동일: 양끝 공백 -> 양끝 백슬래시 -> 양끝 공백
-        let value = m[1].trim().replace(/^\\+/, "").replace(/\\+$/, "").trim();
-        if (VERSION_FULLMATCH_RE.test(value) || DATE_FULLMATCH_RE.test(value)) {
-          return { value: value.replace(/^[vV]+/, ""), failReason: null };
-        }
-        return { value: null, failReason: `'${value}' 형식을 인식하지 못함` };
-      }
-    }
+  const matches = texts.flatMap((text) => collectMatchesFromOneComment(text, targetNorm));
+
+  if (matches.length === 0) {
+    return { value: null, failReason: "표에서 이 산출물과 일치하는 행을 찾지 못함" };
+  }
+  if (matches.length > 1) {
+    return { value: null, failReason: "대상 산출물이 두번 이상 작성되어 있음. - 직접 확인 필요" };
   }
 
-  // %% 스팬 방식으로 못 찾았으면(스팬 자체가 없거나, 있어도 우리 산출물 행이 아니면), 셀
-  // 자체에 스타일을 입히는 표 문법으로 한 번 더 시도한다(extractTargetVersionFromCellStyledTable
-  // 참고 - 실제로 이 표기법만 쓰는 표가 있어서 추가함).
-  const cellStyledResult = extractTargetVersionFromCellStyledTable(section, targetNorm);
-  if (cellStyledResult) return cellStyledResult;
-
-  if (valueSpans.length === 0) {
-    return { value: null, failReason: "버전(또는 날짜) 값을 인식하지 못함" };
+  const value = matches[0];
+  if (VERSION_FULLMATCH_RE.test(value) || DATE_FULLMATCH_RE.test(value)) {
+    return { value: value.replace(/^[vV]+/, ""), failReason: null };
   }
-  return { value: null, failReason: "표에서 이 산출물과 일치하는 행을 찾지 못함" };
+  return { value: null, failReason: `'${value}' 형식을 인식하지 못함` };
 }
 
 /** codebeamer의 ISO 8601 날짜/시각 문자열을 YYMMDD 6자리로 변환한다 (문자열의 날짜 부분을 그대로
@@ -237,7 +197,6 @@ function toYYMMDD(isoDatetimeStr) {
 }
 
 export {
-  findEnclosingTable,
   stripProcessTag,
   extractProcessTag,
   stripTrailingQualifier,

@@ -134,6 +134,10 @@ function findDocHistoryManualCheckReasons(allBaselines, checkpointVersion, valid
   const prReasons = [];
   const crReasons = [];
   for (const b of newBaselines) {
+    // 승인 스탬프 baseline(versionType에 "Approved" 포함)은 그 자체로는 새 내용이 아니라
+    // 바로 앞 형제(순수 버전업) baseline의 설명을 그대로 복사해 쓴다(buildAllBaselinesByTracker
+    // 참고) - 같은 버전을 두 번 검사하는 꼴이라, 승인 스탬프는 건너뛰고 순수 버전업 쪽만 본다.
+    if ((b.versionType || "").includes("Approved")) continue;
     const desc = b.description || "";
     const prNums = [];
     PR_IN_DESC_RE.lastIndex = 0;
@@ -496,11 +500,14 @@ async function processTrackerRow(client, mergedRow, ctx) {
         const commentsResp = await client.getJsonSoft(`https://codebeamer.slworld.com/cb/rest/v3/items/${paItem.id}/comments`);
         if (commentsResp.ok) {
           const comments = commentsResp.json || [];
-          const combinedText = comments
+          // 코멘트들을 하나로 합치지 않고 각자 따로 넘긴다 - 합쳐버리면(예전엔 공백 하나로
+          // 이어붙였음) 한 코멘트의 표 닫는 토큰 바로 뒤에 다른 코멘트의 평문이 붙어서, 범위
+          // 제한 없이 전체를 보는 지금 매칭 로직이 서로 다른 코멘트 내용을 섞어 엉뚱한 값을
+          // 만들어낼 수 있다(extractTargetVersionFromComment 쪽 설명 참고).
+          const commentTexts = comments
             .filter((c) => c && typeof c === "object")
-            .map((c) => c.comment || "")
-            .join(" ");
-          const extracted = extractTargetVersionFromComment(combinedText, tName);
+            .map((c) => c.comment || "");
+          const extracted = extractTargetVersionFromComment(commentTexts, tName);
           targetVersion = extracted.value || "";
           versionCheckFailReason = extracted.failReason || "";
         } else {

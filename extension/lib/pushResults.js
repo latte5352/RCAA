@@ -114,6 +114,15 @@ export async function pushRecordResult(client, record) {
     status: { id: isNgFound ? 3 : 2, name: isNgFound ? "NG" : "OK", type: "ChoiceOptionReference" },
   });
 
+  // 반영이 다 끝난 뒤 Create Date(id 4)를 눌러준다 - codebeamer 워크플로우가 누르는 즉시
+  // 자동으로 원래 상태(방금 넣은 NG/OK)로 되돌리므로, 이 뒤에 상태를 다시 되돌리는 PUT은
+  // 따로 필요 없다(사용자가 직접 확인한 동작). 'Open'과 같은 분류(flags 64, 트랜지션성
+  // 상태)라 그 PUT과 같은 이중 래핑 형태를 그대로 쓴다.
+  await client.putJson(itemUrl, {
+    ...basePayload,
+    status: { status: { id: 4, name: "Create Date", type: "ChoiceOptionReference" } },
+  });
+
   return "updated";
 }
 
