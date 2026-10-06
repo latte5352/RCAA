@@ -78,6 +78,16 @@ export const STATUS_RULE_MANUAL_CHECK_TRACKERS = [
   "Hardware Circuit Diagram Package",
 ];
 
+// 이 트래커들은 승인 이후 바뀐 게 없으면 감사 자체를 건너뛴다(규칙 4개 전부 N/A, 상태 직접
+// 확인 목록에도 안 올림). "승인 이후 변경 없음" = 지금 상태가 승인/베이스라인 완료이고, 트래커의
+// 가장 최근 baseline이 승인 스탬프("(Approved)")인 경우 - 승인 뒤에 Version Up/Create Date를
+// 하면 승인 스탬프가 아닌 baseline이 최신이 되므로 다시 감사 대상이 된다. 앞에 차종 코드가
+// 붙어도 매칭되도록 접미사 기준으로 비교한다(matchConfiguredSuffix).
+export const SKIP_AUDIT_IF_UNCHANGED_SINCE_APPROVAL_TRACKERS = [
+  "Hardware PCB Package",
+  "Hardware Circuit Diagram Package",
+];
+
 // ITEM_LIST_ENTRIES_WITHOUT_TRACKER에 있는 트래커 중에서도, 상태 규칙(리뷰레포트 대조)은
 // 애초에 리뷰레포트 개념 자체가 없어서 그냥 N/A로 두고, 나머지 저장/버전/문서이력 규칙은
 // 사람이 직접 입력하지 않으면 반영을 막아야 하는 트래커들(예: Source Code - 실제 산출물이

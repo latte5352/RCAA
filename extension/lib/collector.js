@@ -623,6 +623,9 @@ async function processTrackerRow(client, mergedRow, ctx) {
     lastEdit: hInfo.last,
     status: hInfo.status,
     currentVersion: base.version || "미업로드",
+    // 가장 최근 baseline이 승인 스탬프인지 - 승인 이후 새 버전이 안 생겼다는 뜻이라,
+    // SKIP_AUDIT_IF_UNCHANGED_SINCE_APPROVAL_TRACKERS 트래커의 감사 생략 판단에 쓴다(ruleEngine.js).
+    latestBaselineIsApproval: (base.versionType || "").includes("Approved"),
     validPrNumbers: ctx.validPrNumbers,
     versioning: base.createdAt || "",
     verDesc: base.description || "",

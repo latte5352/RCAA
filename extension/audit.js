@@ -39,6 +39,8 @@ const versionFailWrap = document.getElementById("versionFailWrap");
 const versionFailList = document.getElementById("versionFailList");
 const manualStatusCheckWrap = document.getElementById("manualStatusCheckWrap");
 const manualStatusCheckList = document.getElementById("manualStatusCheckList");
+const unchangedSinceApprovalWrap = document.getElementById("unchangedSinceApprovalWrap");
+const unchangedSinceApprovalList = document.getElementById("unchangedSinceApprovalList");
 const docHistoryManualCheckWrap = document.getElementById("docHistoryManualCheckWrap");
 const docHistoryManualCheckList = document.getElementById("docHistoryManualCheckList");
 const crIdManualCheckWrap = document.getElementById("crIdManualCheckWrap");
@@ -82,6 +84,7 @@ let warningsData = {
   crIdManualCheckTrackers: [],
   noTrackerManualCheckTrackers: [],
   fetchFailedTrackers: [],
+  unchangedSinceApprovalTrackers: [],
 };
 let reviewStatus = "pending"; // "pending" | "applied"
 let currentProjectId = null;
@@ -634,6 +637,7 @@ function renderWarnings(data) {
     noTrackerManualCheckTrackers = [],
     fetchFailedTrackers = [],
     unregisteredReferenceFiles = [],
+    unchangedSinceApprovalTrackers = [],
   } = data;
 
   if (newTrackers.length) {
@@ -702,6 +706,13 @@ function renderWarnings(data) {
   if (manualStatusCheckTrackers.length) {
     renderWarnList(manualStatusCheckList, manualStatusCheckTrackers, (name) => simpleRow(name));
     manualStatusCheckWrap.classList.remove("hidden");
+  }
+  // 재시도로 다시 그려질 때 줄어들 수 있어서 비어있으면 다시 숨긴다.
+  if (unchangedSinceApprovalTrackers.length) {
+    renderWarnList(unchangedSinceApprovalList, unchangedSinceApprovalTrackers, (name) => simpleRow(name));
+    unchangedSinceApprovalWrap.classList.remove("hidden");
+  } else {
+    unchangedSinceApprovalWrap.classList.add("hidden");
   }
   if (docHistoryManualCheckTrackers.length) {
     renderWarnList(docHistoryManualCheckList, docHistoryManualCheckTrackers, (f) => {
@@ -981,7 +992,7 @@ async function retryTrackers(namesToRetry, { replaceExisting, button, idleLabel 
 
     const {
       records: auditedRecords, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers,
-      docHistoryManualCheckTrackers, crIdManualCheckTrackers, noTrackerManualCheckTrackers,
+      docHistoryManualCheckTrackers, crIdManualCheckTrackers, noTrackerManualCheckTrackers, unchangedSinceApprovalTrackers,
     } = runAudit(auditRecords, { cadence, anchor, periodicTrackers: PERIODIC_TRACKERS });
     auditRecords = auditedRecords;
 
@@ -993,7 +1004,7 @@ async function retryTrackers(namesToRetry, { replaceExisting, button, idleLabel 
       newTrackers: [...(warningsData.newTrackers || []), ...newTrackers],
       changedTrackers: [...(warningsData.changedTrackers || []), ...changedTrackers],
       versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers,
-      docHistoryManualCheckTrackers, crIdManualCheckTrackers, noTrackerManualCheckTrackers,
+      docHistoryManualCheckTrackers, crIdManualCheckTrackers, noTrackerManualCheckTrackers, unchangedSinceApprovalTrackers,
       fetchFailedTrackers: stillFailed,
     };
 
@@ -1053,7 +1064,7 @@ async function runNewAudit(client, username) {
   setProgress(60, "감사 규칙 검사 중...");
   const {
     records: auditedRecords, versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers, docHistoryManualCheckTrackers,
-    crIdManualCheckTrackers, noTrackerManualCheckTrackers, unregisteredReferenceFiles,
+    crIdManualCheckTrackers, noTrackerManualCheckTrackers, unregisteredReferenceFiles, unchangedSinceApprovalTrackers,
   } = runAudit(records, {
     cadence, anchor, periodicTrackers: PERIODIC_TRACKERS,
   });
@@ -1065,7 +1076,7 @@ async function runNewAudit(client, username) {
   warningsData = {
     newTrackers, changedTrackers, versionCheckFailures, incompleteFetchTrackers,
     manualStatusCheckTrackers, docHistoryManualCheckTrackers, crIdManualCheckTrackers, noTrackerManualCheckTrackers, fetchFailedTrackers,
-    unregisteredReferenceFiles,
+    unregisteredReferenceFiles, unchangedSinceApprovalTrackers,
   };
 
   setProgress(100, "검토 대기 중 (codebeamer에는 아직 반영 안 됨)");

@@ -16,7 +16,7 @@
 
 import { stripProcessTag, stripTrailingQualifier, nameEndsWith, matchConfiguredSuffix, isDateBasedTracker } from "./wikiTable.js";
 import { parseDateOnly, formatDateOnly, businessDaysBetween } from "./businessDays.js";
-import { STATUS_RULE_MANUAL_CHECK_TRACKERS, NO_TRACKER_FORCE_MANUAL_RULES } from "./config.js";
+import { STATUS_RULE_MANUAL_CHECK_TRACKERS, NO_TRACKER_FORCE_MANUAL_RULES, SKIP_AUDIT_IF_UNCHANGED_SINCE_APPROVAL_TRACKERS } from "./config.js";
 
 const TRAILING_QUALIFIER_RE = /(\s*\([^)]*\))+$/;
 // 문자로만 이뤄진 짧은 진짜 확장자(zip/docx/pdf 등)로 끝날 때만 파일 확장자로 인식한다 -
@@ -454,6 +454,8 @@ export function runAudit(records, options = {}) {
   // 없어 형상감사 표에 실어봤자 의미가 없으므로(체크박스도 못 켬), 표에서는 빼고 별도 경고
   // 목록으로만 안내한다. 등재된 파일은 그대로 표의 한 행으로 남는다.
   const unregisteredReferenceFiles = [];
+  // SKIP_AUDIT_IF_UNCHANGED_SINCE_APPROVAL_TRACKERS 중 승인 이후 변경이 없어서 감사를 건너뛴 트래커.
+  const unchangedSinceApprovalTrackers = [];
 
   for (const record of records) {
     // isReferenceFile 여부와 무관하게 먼저 확인한다 - Reference 파일도 페이지네이션이
@@ -476,6 +478,24 @@ export function runAudit(records, options = {}) {
       record.docHistoryRule = null;
       record.statusRule = null;
       record.comment = "";
+      record.detailComment = [];
+      continue;
+    }
+
+    // 승인 이후 변경이 없는 HW 패키지 등은 감사를 통째로 건너뛴다(config.js 설명 참고).
+    // 조회가 실패/불완전했으면 "변경 없음"을 믿을 수 없으니 건너뛰지 않는다.
+    if (
+      !record.fetchFailed && !record.itemFetchIncomplete &&
+      FINALIZED_STATUSES.has(record.status) && record.latestBaselineIsApproval &&
+      matchConfiguredSuffix(stripProcessTag(record.trackerName), SKIP_AUDIT_IF_UNCHANGED_SINCE_APPROVAL_TRACKERS) !== null
+    ) {
+      unchangedSinceApprovalTrackers.push(record.trackerName);
+      record.saveRule = null;
+      record.versionRule = null;
+      record.docHistoryRule = null;
+      record.statusRule = null;
+      record.ruleReasons = { saveRule: "", versionRule: "", docHistoryRule: "", statusRule: "" };
+      record.comment = `승인 이후 변경 없음(v${record.currentVersion}, ${record.status}) - 감사 생략`;
       record.detailComment = [];
       continue;
     }
@@ -633,6 +653,6 @@ export function runAudit(records, options = {}) {
   return {
     records: records.filter((r) => !(r.isReferenceFile && !r.referenceFileRegistered)),
     versionCheckFailures, incompleteFetchTrackers, manualStatusCheckTrackers, docHistoryManualCheckTrackers,
-    crIdManualCheckTrackers, noTrackerManualCheckTrackers, unregisteredReferenceFiles,
+    crIdManualCheckTrackers, noTrackerManualCheckTrackers, unregisteredReferenceFiles, unchangedSinceApprovalTrackers,
   };
 }
