@@ -10,7 +10,7 @@ import { createClient } from "./lib/codebeamerClient.js";
 import { collectAuditData } from "./lib/collector.js";
 import { runAudit, DEFAULT_PERIODIC_CADENCE, DEFAULT_PERIODIC_ANCHOR } from "./lib/ruleEngine.js";
 import { PERIODIC_TRACKERS } from "./lib/periodicTrackers.js";
-import { diffAndUpdateHistory, loadHistorySnapshot } from "./lib/history.js";
+import { diffAndUpdateHistory, loadHistorySnapshot, diffAgainstAppliedSnapshot, updateAppliedSnapshot } from "./lib/history.js";
 import { pushAllResults } from "./lib/pushResults.js";
 import { saveReviewState, loadReviewState } from "./lib/reviewState.js";
 import { checkUserProjectRole } from "./lib/memberRoles.js";
@@ -193,13 +193,19 @@ const ALL_RULE_KEYS = ["saveRule", "versionRule", "docHistoryRule", "statusRule"
 function getManualCheckFlags(record) {
   const flags = [];
   if ((warningsData.manualStatusCheckTrackers || []).includes(record.trackerName)) {
-    flags.push({ rule: "statusRule", label: "상태", reason: null });
+    const links = record.paItemId
+      ? [{ href: `https://codebeamer.slworld.com/cb/issue/${record.paItemId}`, text: "🔗 대상 산출물에서 직접 확인" }]
+      : [];
+    flags.push({ rule: "statusRule", label: "상태", reason: null, links });
   }
   const docHistEntry = (warningsData.docHistoryManualCheckTrackers || []).find(
     (t) => t.trackerName === record.trackerName
   );
   if (docHistEntry) {
-    flags.push({ rule: "docHistoryRule", label: "이력", reason: docHistEntry.reason });
+    const links = docHistEntry.paItemId
+      ? [{ href: `https://codebeamer.slworld.com/cb/issue/${docHistEntry.paItemId}`, text: "🔗 대상 산출물에서 직접 확인" }]
+      : [];
+    flags.push({ rule: "docHistoryRule", label: "이력", reason: docHistEntry.reason, links });
   }
   // CR 기재 확인도 PR과 같은 codebeamer 필드(이력)를 강제 대상으로 삼는다 - 둘 다 "문서 이력
   // 기술 규칙"의 증거라서, 둘 중 하나라도 걸리면 이력 규칙을 직접 판정해야 한다.
@@ -264,7 +270,10 @@ function addReasonToComment(comment, reasonText) {
 // commentSync: 선택 사항 규칙에서만 쓴다 - { textarea, reasonText(그 규칙의 자동 NG 사유) }를
 // 주면, 이 규칙을 NG가 아닌 값으로 바꿀 때 코멘트에서 그 사유를 빼고, 다시 NG(또는 자동판정
 // 유지)로 돌리면 다시 넣는다.
-function createManualFieldRow(rule, label, reason, isRequired, autoValue, commentSync = null) {
+// links: [{href, text}] - 판정하려면 결국 codebeamer에서 직접 봐야 하는 항목(📝 문서 이력 PR
+// 기재 확인 필요, 🔍 리뷰 대상 버전 자동 확인 불가)은 위 경고 목록과 같은 링크를 사유 옆에 같이
+// 보여줘서, 입력하다가 경고 목록까지 다시 올라가지 않아도 되게 한다.
+function createManualFieldRow(rule, label, reason, isRequired, autoValue, commentSync = null, links = []) {
   const fieldRow = document.createElement("div");
   fieldRow.className = "manual-field-row";
 
@@ -301,6 +310,16 @@ function createManualFieldRow(rule, label, reason, isRequired, autoValue, commen
     reasonSpan.className = "manual-field-reason";
     reasonSpan.textContent = `(참고: ${reason})`;
     fieldRow.appendChild(reasonSpan);
+  }
+
+  for (const { href, text } of links) {
+    const link = document.createElement("a");
+    link.className = "manual-field-link";
+    link.href = href;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = text;
+    fieldRow.appendChild(link);
   }
 
   if (commentSync && commentSync.reasonText) {
@@ -346,13 +365,31 @@ function createManualRow(record, requiredFlags) {
   textarea.value = record.comment || "";
 
   const requiredRuleKeys = new Set(requiredFlags.map((f) => f.rule));
+  // 🔍 리뷰 대상 버전 자동 확인 불가 항목은 강제 입력 대상은 아니지만, 버전 규칙 줄에 그 사유와
+  // 링크(대상 산출물 / 리뷰레포트)를 같이 보여준다.
+  const versionFail = (warningsData.versionCheckFailures || []).find((f) => f.trackerName === record.trackerName);
+  const versionFailLinks = [];
+  if (versionFail?.targetPaItemId) {
+    versionFailLinks.push({ href: `https://codebeamer.slworld.com/cb/issue/${versionFail.targetPaItemId}`, text: "🔗 대상 산출물에서 직접 확인" });
+  }
+  if (versionFail?.reviewReportPaItemId) {
+    versionFailLinks.push({ href: `https://codebeamer.slworld.com/cb/issue/${versionFail.reviewReportPaItemId}`, text: "🔗 리뷰레포트 PA 항목에서 직접 확인" });
+  }
+
   for (const flag of requiredFlags) {
-    content.appendChild(createManualFieldRow(flag.rule, flag.label, flag.reason, true, null));
+    const isVersionFail = flag.rule === "versionRule" && versionFail;
+    const reason = flag.reason ?? (isVersionFail ? versionFail.reason : null);
+    const links = flag.links ?? (isVersionFail ? versionFailLinks : []);
+    content.appendChild(createManualFieldRow(flag.rule, flag.label, reason, true, null, null, links));
   }
   for (const rule of ALL_RULE_KEYS) {
     if (requiredRuleKeys.has(rule)) continue;
     const reasonText = (record.ruleReasons || {})[rule] || "";
-    content.appendChild(createManualFieldRow(rule, RULE_LABELS[rule], null, false, record[rule], { textarea, reasonText }));
+    const isVersionFail = rule === "versionRule" && versionFail;
+    content.appendChild(createManualFieldRow(
+      rule, RULE_LABELS[rule], isVersionFail ? versionFail.reason : null, false, record[rule],
+      { textarea, reasonText }, isVersionFail ? versionFailLinks : []
+    ));
   }
 
   const commentLabel = document.createElement("div");
@@ -704,7 +741,24 @@ function renderWarnings(data) {
     versionFailWrap.classList.remove("hidden");
   }
   if (manualStatusCheckTrackers.length) {
-    renderWarnList(manualStatusCheckList, manualStatusCheckTrackers, (name) => simpleRow(name));
+    // 이 목록은 이름만 들고 있어서, 대상 산출물 링크용 PA 항목 ID는 감사 레코드에서 찾는다.
+    renderWarnList(manualStatusCheckList, manualStatusCheckTrackers, (name) => {
+      const row = simpleRow(name);
+      const paItemId = auditRecords.find((r) => r.trackerName === name)?.paItemId;
+      if (paItemId) {
+        const link = document.createElement("a");
+        link.className = "version-fail-link";
+        link.href = `https://codebeamer.slworld.com/cb/issue/${paItemId}`;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "🔗 대상 산출물에서 직접 확인";
+        const linksRow = document.createElement("div");
+        linksRow.className = "version-fail-links";
+        linksRow.appendChild(link);
+        row.appendChild(linksRow);
+      }
+      return row;
+    });
     manualStatusCheckWrap.classList.remove("hidden");
   }
   // 재시도로 다시 그려질 때 줄어들 수 있어서 비어있으면 다시 숨긴다.
@@ -917,6 +971,10 @@ applyBtn.addEventListener("click", async () => {
     }
 
     await persistReviewState("applied");
+    // 반영이 실제로 성공했을 때만 "가장 최근 반영한 감사" 기준점을 갱신한다 - 감사만 돌리고
+    // 반영 안 한 경우까지 이 기준점이 움직이면, 다음 감사의 "🆕/🔄" 안내가 보고도 안 한
+    // 감사 대비로 비교돼버린다.
+    await updateAppliedSnapshot(projectName, auditRecords);
   } catch (e) {
     statusEl.textContent = `반영 중 오류: ${e.message}`;
     setControlsEnabled(true);
@@ -996,7 +1054,10 @@ async function retryTrackers(namesToRetry, { replaceExisting, button, idleLabel 
     } = runAudit(auditRecords, { cadence, anchor, periodicTrackers: PERIODIC_TRACKERS });
     auditRecords = auditedRecords;
 
-    const { newTrackers, changedTrackers } = await diffAndUpdateHistory(projectName, retriedRecords);
+    // runNewAudit과 동일한 이유로, docHistoryCheckedVersion 체크포인트 갱신(diffAndUpdateHistory)과
+    // "🆕/🔄" 안내용 비교(diffAgainstAppliedSnapshot)를 분리한다.
+    await diffAndUpdateHistory(projectName, retriedRecords);
+    const { newTrackers, changedTrackers } = await diffAgainstAppliedSnapshot(projectName, retriedRecords);
 
     const excludedCilIds = getExcludedCilIds();
     warningsData = {
@@ -1071,7 +1132,13 @@ async function runNewAudit(client, username) {
   auditRecords = auditedRecords;
 
   setProgress(80, "지난 감사와 비교 중...");
-  const { newTrackers, changedTrackers } = await diffAndUpdateHistory(projectName, auditedRecords);
+  // diffAndUpdateHistory는 docHistoryCheckedVersion 체크포인트 쪽 스냅샷을 갱신하는 용도로
+  // 그대로 호출하되(이건 반영 여부와 무관하게 실행할 때마다 전진해야 함), 그 반환값(new/changed)은
+  // 더 이상 안 쓴다 - "🆕 새로 등재"/"🔄 변경" 안내는 "가장 최근 반영한 감사" 기준으로 봐야
+  // 하므로(감사만 돌리고 반영 안 하면 보고된 게 아님), 반영 성공 시에만 갱신되는 별도 스냅샷과
+  // 비교한다(applyBtn 핸들러의 updateAppliedSnapshot 참고).
+  await diffAndUpdateHistory(projectName, auditedRecords);
+  const { newTrackers, changedTrackers } = await diffAgainstAppliedSnapshot(projectName, auditedRecords);
 
   warningsData = {
     newTrackers, changedTrackers, versionCheckFailures, incompleteFetchTrackers,

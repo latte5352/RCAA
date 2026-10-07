@@ -48,7 +48,7 @@
   #changedTrackersWrap { background: #fff8e1; border: 1px solid #f0c14b; color: #b8860b; }
   #versionFailWrap { background: #fdf0e6; border: 1px solid #e8a05a; color: #a85c1a; }
   #manualStatusCheckWrap { background: #f1e8fd; border: 1px solid #b39ddb; color: #5e35b1; }
-  #unchangedSinceApprovalWrap { background: #eef5ee; border: 1px solid #a5d6a7; color: #2e7d32; }
+  #unchangedSinceApprovalWrap { background: #f3f4f6; border: 1px solid #bdbdbd; color: #546e7a; }
   #docHistoryManualCheckWrap { background: #e6f4ea; border: 1px solid #81c784; color: #2e7d32; }
   #crIdManualCheckWrap { background: #fce4ec; border: 1px solid #f06292; color: #ad1457; }
   #noTrackerManualCheckWrap { background: #e3f2fd; border: 1px solid #64b5f6; color: #1565c0; }
@@ -114,6 +114,8 @@
   .manual-field-label { font-weight: 600; color: #444; min-width: 40px; }
   .manual-verdict-select { padding: 5px 8px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; }
   .manual-field-reason { color: #888; font-size: 12px; }
+  .manual-field-link { font-size: 12px; color: #a85c1a; font-weight: 600; text-decoration: none; }
+  .manual-field-link:hover { text-decoration: underline; }
   .manual-comment-label { font-size: 12px; color: #666; margin: 6px 0 4px; }
   .manual-comment-input { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; resize: vertical; }
   #status .validation-title { color: #c0392b; font-weight: 600; margin-bottom: 4px; }
@@ -144,11 +146,11 @@
     </div>
 
     <details id="newTrackersWrap" class="warn hidden">
-      <summary>🆕 지난 감사 대비 새로 등재된 산출물 <span class="warn-count"></span></summary>
+      <summary>🆕 마지막으로 반영한 감사 대비 새로 등재된 산출물 <span class="warn-count"></span></summary>
       <div id="newTrackersList"></div>
     </details>
     <details id="changedTrackersWrap" class="warn hidden">
-      <summary>🔄 지난 감사 대비 상태/버전이 변경된 산출물 <span class="warn-count"></span></summary>
+      <summary>🔄 마지막으로 반영한 감사 대비 상태/버전이 변경된 산출물 <span class="warn-count"></span></summary>
       <div id="changedTrackersList"></div>
     </details>
     <details id="versionFailWrap" class="warn hidden">

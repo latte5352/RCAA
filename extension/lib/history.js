@@ -143,3 +143,83 @@ export async function diffAndUpdateHistory(projectName, records) {
 
   return { newTrackers, changedTrackers };
 }
+
+// ── 반영(applyBtn) 기준 스냅샷 ───────────────────────────────────────────────
+// 위 history_snapshot(diffAndUpdateHistory)은 감사를 "실행"만 해도(반영 여부와 무관하게)
+// 매번 갱신된다 - docHistoryCheckedVersion 체크포인트는 그래야 맞지만("툴이 이미 확인했는지"는
+// 반영 여부와 상관없음), "🆕 새로 등재된 산출물"/"🔄 변경된 산출물" 안내는 성격이 다르다 -
+// 감사만 돌려보고 codebeamer에 반영(보고)하지 않은 경우까지 "직전 감사"로 쳐버리면, 실제로는
+// 아직 아무에게도 보고 안 한 감사 대비로 잘못 비교하게 된다. 그래서 이 안내만 따로, 반영이
+// 실제로 성공했을 때만 갱신되는 별도 스냅샷과 비교한다.
+function appliedSnapshotKey(projectName) {
+  return `applied_snapshot_${projectName}`;
+}
+
+async function loadAppliedSnapshotRaw(projectName) {
+  const key = appliedSnapshotKey(projectName);
+  const stored = await chrome.storage.local.get(key);
+  if (stored[key]) return stored[key];
+  // 이 기능 도입 전이라 이 프로젝트의 "반영 기준" 스냅샷이 아직 한 번도 없으면, 기존 "마지막
+  // 실행" 스냅샷을 첫 비교 기준으로 대신 쓴다 - 안 그러면 이 기능이 처음 쓰이는 순간 지금 감사
+  // 대상 전체가 "새로 등재됨"으로 잘못 떠서 혼란을 준다.
+  return loadSnapshot(projectName);
+}
+
+async function saveAppliedSnapshot(projectName, snapshot) {
+  await chrome.storage.local.set({ [appliedSnapshotKey(projectName)]: snapshot });
+}
+
+function extractAppliedSnapshotEntries(records) {
+  const snapshot = {};
+  for (const r of records) {
+    if (!r.trackerName) continue;
+    snapshot[r.trackerName] = { status: r.status || null, version: r.currentVersion || null, trackerId: r.trackerId || null };
+  }
+  return snapshot;
+}
+
+/**
+ * "가장 최근 codebeamer에 반영한 감사" 대비 새로 등재/변경된 산출물을 비교만 한다(갱신은
+ * updateAppliedSnapshot이 따로 함 - 감사를 실행할 때마다 이걸 호출해 보여주되, 반영 전까지는
+ * 저장된 기준점 자체는 그대로 둬야 하므로).
+ * @returns {Promise<{newTrackers: string[], changedTrackers: Array}>}
+ */
+export async function diffAgainstAppliedSnapshot(projectName, records) {
+  const previous = await loadAppliedSnapshotRaw(projectName);
+  const current = extractAppliedSnapshotEntries(records);
+
+  const newTrackers = Object.keys(current)
+    .filter((name) => !(name in previous))
+    .sort();
+
+  const changedTrackers = [];
+  for (const [name, cur] of Object.entries(current)) {
+    const prev = previous[name];
+    if (!prev) continue;
+    if (prev.status !== cur.status || prev.version !== cur.version) {
+      changedTrackers.push({
+        trackerName: name,
+        previousStatus: prev.status,
+        currentStatus: cur.status,
+        previousVersion: prev.version,
+        currentVersion: cur.version,
+      });
+    }
+  }
+  changedTrackers.sort((a, b) => a.trackerName.localeCompare(b.trackerName));
+
+  return { newTrackers, changedTrackers };
+}
+
+/**
+ * 반영(applyBtn)이 실제로 성공했을 때만 호출한다 - "가장 최근 반영한 감사" 기준점을 이번
+ * 감사 결과로 갱신한다. 체크 해제해서 반영 대상에서 뺀 트래커도 포함한다 - "반영"은 그
+ * 트래커의 codebeamer 감사 필드에 결과를 쓰는 것뿐이고, 이 기준점은 "마지막으로 보고한 감사
+ * 시점에 트래커들이 실제로 어떤 상태/버전이었는지"를 뜻하므로, 반영 대상에서 빠졌어도 이번에
+ * 똑같이 관찰은 한 값이라 기준점에 반영하는 게 맞다.
+ */
+export async function updateAppliedSnapshot(projectName, records) {
+  const previous = await loadAppliedSnapshotRaw(projectName);
+  const current = extractAppliedSnapshotEntries(records);
+  await saveAppliedSnapshot(projectName, { ...previous, ...current });
+}
