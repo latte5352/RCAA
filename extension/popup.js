@@ -10,6 +10,7 @@ import { extractProcessTag } from "./lib/wikiTable.js";
 import { loadReviewState } from "./lib/reviewState.js";
 import { exportHistorySnapshot, importHistorySnapshot } from "./lib/history.js";
 import { checkUserProjectRole, filterProjectsByRole } from "./lib/memberRoles.js";
+import { businessDaysBetween, formatDateOnly } from "./lib/businessDays.js";
 import { BASE_URL, BASE_URL_V3, PROJ_BASE_URL, CM_ROLE_NAME, TRACKER_NAME_CIL, TRACKER_NAME_NCL } from "./lib/config.js";
 
 const loginView = document.getElementById("loginView");
@@ -66,6 +67,34 @@ const projectFilterNote = document.getElementById("projectFilterNote");
 let allProjects = [];
 let selectedProjectName = null;
 let activeOptionIndex = -1;
+
+// 프로젝트 검색창에서 입력 없이 포커스만 했을 때, 최근 영업일 N일 이내에 실제로 선택했던
+// 프로젝트를 위쪽에 따로 보여주기 위한 기록 - 로그인 세션이 아니라 디스크에 남아야 다음에
+// 확장을 다시 열었을 때도 "최근"이 유지되므로 storage.session이 아니라 storage.local에
+// 저장한다. "영업일 기준"은 다른 규칙(버저닝 지연 등)과 같은 businessDaysBetween(주말·대한민국
+// 공휴일 제외)을 그대로 재사용한다.
+const RECENT_PROJECT_BUSINESS_DAYS = 10;
+const RECENT_PROJECTS_KEY = "recent_project_selections";
+
+function localDateOnlyIso(ts) {
+  const d = new Date(ts);
+  return formatDateOnly(new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())));
+}
+
+async function recordProjectSelection(name) {
+  const { [RECENT_PROJECTS_KEY]: map = {} } = await chrome.storage.local.get(RECENT_PROJECTS_KEY);
+  map[name] = Date.now();
+  await chrome.storage.local.set({ [RECENT_PROJECTS_KEY]: map });
+}
+
+async function getRecentProjectNames() {
+  const { [RECENT_PROJECTS_KEY]: map = {} } = await chrome.storage.local.get(RECENT_PROJECTS_KEY);
+  const todayIso = localDateOnlyIso(Date.now());
+  return Object.entries(map)
+    .filter(([, ts]) => businessDaysBetween(localDateOnlyIso(ts), todayIso) <= RECENT_PROJECT_BUSINESS_DAYS)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name]) => name);
+}
 
 let allTrackerNames = [];
 let trackerNamesLoadedForProject = null;
@@ -281,29 +310,52 @@ async function loadProjects(client, username) {
   }
 }
 
-function renderProjectOptions(filterText) {
+function appendProjectOption(project) {
+  const option = document.createElement("div");
+  option.className = "project-option";
+  option.textContent = project.name;
+  option.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    selectProject(project.name);
+  });
+  projectDropdownList.appendChild(option);
+}
+
+async function renderProjectOptions(filterText) {
   const query = filterText.trim().toLowerCase();
-  const matches = query ? allProjects.filter((p) => p.name.toLowerCase().includes(query)) : allProjects;
+  let matches = query ? allProjects.filter((p) => p.name.toLowerCase().includes(query)) : allProjects;
 
   projectDropdownList.innerHTML = "";
   activeOptionIndex = -1;
 
-  if (!matches.length) {
+  // 검색어 없이 포커스만 한 상태에서만 "최근 선택한 프로젝트"를 따로 보여준다 - 검색 중엔
+  // 사용자 의도가 명확하니 그냥 일치하는 목록만 보여주면 된다.
+  if (!query) {
+    const recentNames = await getRecentProjectNames();
+    const recentProjects = recentNames.map((name) => allProjects.find((p) => p.name === name)).filter(Boolean);
+    if (recentProjects.length) {
+      const label = document.createElement("div");
+      label.className = "project-option-group-label";
+      label.textContent = `최근 선택한 프로젝트 (영업일 ${RECENT_PROJECT_BUSINESS_DAYS}일 이내)`;
+      projectDropdownList.appendChild(label);
+      recentProjects.forEach(appendProjectOption);
+
+      const recentSet = new Set(recentProjects.map((p) => p.name));
+      matches = matches.filter((p) => !recentSet.has(p.name));
+
+      const divider = document.createElement("div");
+      divider.className = "project-option-divider";
+      projectDropdownList.appendChild(divider);
+    }
+  }
+
+  if (!matches.length && !projectDropdownList.children.length) {
     const empty = document.createElement("div");
     empty.className = "project-option-empty";
     empty.textContent = "일치하는 프로젝트가 없습니다";
     projectDropdownList.appendChild(empty);
   } else {
-    matches.forEach((project) => {
-      const option = document.createElement("div");
-      option.className = "project-option";
-      option.textContent = project.name;
-      option.addEventListener("mousedown", (e) => {
-        e.preventDefault();
-        selectProject(project.name);
-      });
-      projectDropdownList.appendChild(option);
-    });
+    matches.forEach(appendProjectOption);
   }
 
   projectDropdownList.classList.remove("hidden");
@@ -314,6 +366,7 @@ function selectProject(name) {
   projectSearchInput.value = name;
   projectDropdownList.classList.add("hidden");
   chrome.storage.session.set({ selected_project: name });
+  recordProjectSelection(name);
   refreshLastAuditInfo();
   refreshCmRoleWarning();
   resetTrackerPicker();
