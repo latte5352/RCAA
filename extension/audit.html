@@ -102,6 +102,24 @@
   #scrollTopBtn { position: fixed; right: 26px; bottom: 26px; z-index: 6; border-radius: 999px; padding: 10px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.18); background: #2d6cdf; color: #fff; border: none; font-weight: 600; }
   #scrollTopBtn:hover { background: #1f57bd; }
 
+  /* 포스트잇처럼 화면 왼쪽 아래에 고정 - 스크롤해도 따라다니되, 평소엔 접어둔 작은 탭만
+     보이게 해서 본문 공간을 차지하지 않는다(사람이 직접 판정할 때 기준표를 참고용으로
+     펼쳐보는 용도). */
+  #guidelineNote { position: fixed; left: 20px; bottom: 26px; z-index: 7; }
+  #guidelineToggleBtn { border-radius: 999px; padding: 10px 16px; box-shadow: 0 2px 10px rgba(0,0,0,.18); background: #fff3cd; border: 1px solid #f0c14b; color: #8a6d1f; font-weight: 700; }
+  #guidelineToggleBtn:hover { background: #ffe9a8; }
+  #guidelinePanel { position: absolute; left: 0; bottom: 48px; width: 440px; max-width: calc(100vw - 40px); max-height: 70vh; overflow-y: auto; background: #fffbea; border: 1px solid #f0c14b; border-radius: 8px; box-shadow: 0 4px 18px rgba(0,0,0,.22); padding: 14px 16px; }
+  #guidelinePanelHeader { display: flex; justify-content: space-between; align-items: center; font-weight: 700; color: #8a6d1f; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #f0d978; }
+  #guidelineCloseBtn { border: none; background: transparent; padding: 2px 6px; font-size: 14px; color: #8a6d1f; }
+  #guidelineCloseBtn:hover { background: transparent; color: #5e4a12; }
+  .guideline-section { margin-bottom: 12px; }
+  .guideline-section:last-child { margin-bottom: 0; }
+  .g-h { font-size: 13px; font-weight: 700; color: #5e4a12; margin-bottom: 4px; }
+  .g-sub { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.55; color: #444; }
+  .g-sub li { margin-bottom: 6px; }
+  .g-sub li:last-child { margin-bottom: 0; }
+  .g-ex, .g-note { color: #8a8a8a; font-size: 12px; margin-top: 2px; }
+
   tr.manual-row td { background: #fffbf0; border-bottom: 1px solid #eee; padding: 10px 12px 12px; }
   tr.manual-row.problem td { background: #fdecea; }
   tr.manual-row.collapsed { display: none; }
@@ -240,6 +258,55 @@
     <div id="status"></div>
   </main>
   <button id="scrollTopBtn" type="button" class="hidden">↑ 맨 위로</button>
+
+  <div id="guidelineNote">
+    <button id="guidelineToggleBtn" type="button">📑 판정 기준</button>
+    <div id="guidelinePanel" class="hidden">
+      <div id="guidelinePanelHeader">
+        <span>📑 사람 판정 기준 (참고용)</span>
+        <button id="guidelineCloseBtn" type="button">✕</button>
+      </div>
+
+      <div class="guideline-section">
+        <div class="g-h">1. 저장 규칙 준수</div>
+        <ol class="g-sub">
+          <li>Configuration Management Plan 내 '3.2 Library Structure'에 맞게 산출물들이 저장되고 관리되고 있는지 확인
+            <div class="g-ex">Ex) System Requirement Specification이 SYS &gt; [SYS.2]System Requirements Analysis &gt; Template 폴더에 저장되었는지 확인</div>
+          </li>
+          <li>Document Tracker의 경우, 하나의 Tracker 내 하나의 파일만 등재되었는지 확인</li>
+          <li>Configuration Management Plan 내 '4.2.4 File Naming Rule'에 맞게 산출물들이 저장되고 관리되고 있는지 확인
+            <div class="g-ex">Ex) Configuration Management Plan과 같이 산출물 명으로만 입력해야 한다.</div>
+          </li>
+        </ol>
+      </div>
+
+      <div class="guideline-section">
+        <div class="g-h">2. 버전 규칙 준수</div>
+        <ol class="g-sub">
+          <li>첫 Edit 이후, Working Day 10일 이내 Version Up이 진행되지 않은 상태</li>
+          <li>일정한 주기 없이 업데이트되는 산출물의 경우, Release / Review Closed / Audit Closed 상태임에도 불구하고 Create Date가 진행되지 않은 상태</li>
+        </ol>
+      </div>
+
+      <div class="guideline-section">
+        <div class="g-h">3. 문서 이력 기술 규칙 준수</div>
+        <ol class="g-sub">
+          <li>Configuration Management Plan 내 '4.2.6 History Description Rule'에 기재한 이력 작성 규칙에 따라 작성되었는지 확인
+            <div class="g-note">단, Approved 상태의 버전은 문서 이력을 확인하지 않는다.</div>
+          </li>
+          <li>PR/CR로 인해 수정된 경우, 해당 산출물의 수정사항에 맞는 PR/CR-ID가 기입되었는지 확인</li>
+        </ol>
+      </div>
+
+      <div class="guideline-section">
+        <div class="g-h">4. 상태 규칙 준수</div>
+        <ol class="g-sub">
+          <li>산출물의 Review Report가 업로드 되기 전, 대상 산출물의 상태가 Waiting for Approval 이전 상태인지 확인</li>
+          <li>산출물의 Review Report가 업로드 되었을 때, 대상 산출물의 상태가 Waiting for Approval 이후 상태인지 확인</li>
+        </ol>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="audit.js"></script>
 </body>

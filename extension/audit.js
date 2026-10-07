@@ -514,6 +514,12 @@ window.addEventListener("scroll", () => {
 });
 scrollTopBtn.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
 
+const guidelineToggleBtn = document.getElementById("guidelineToggleBtn");
+const guidelinePanel = document.getElementById("guidelinePanel");
+const guidelineCloseBtn = document.getElementById("guidelineCloseBtn");
+guidelineToggleBtn.addEventListener("click", () => guidelinePanel.classList.toggle("hidden"));
+guidelineCloseBtn.addEventListener("click", () => guidelinePanel.classList.add("hidden"));
+
 const BOM = "﻿"; // 엑셀에서 CSV를 열었을 때 한글이 깨지지 않게 하는 UTF-8 BOM
 
 function csvField(value) {
