@@ -120,6 +120,14 @@
   .g-sub li:last-child { margin-bottom: 0; }
   .g-ex, .g-note { color: #8a8a8a; font-size: 12px; margin-top: 2px; }
 
+  /* 형상 상태/주기적 감사 보고서 - 오른쪽 아래, scrollTopBtn 바로 위에 뜨는 작은 버튼.
+     누르면 내용은 별도 팝업 창(configReport.html)으로 뜬다 - 포스트잇처럼 이 화면 안에
+     끼워넣었더니 칸이 너무 좁아서 분리했다. 감사 데이터가 준비되기 전까진 숨겨둔다
+     (actionsToolbar가 뜰 때 같이 보여줌). */
+  #configReportNote { position: fixed; right: 20px; bottom: 86px; z-index: 7; }
+  #configReportToggleBtn { border-radius: 999px; padding: 10px 16px; box-shadow: 0 2px 10px rgba(0,0,0,.18); background: #e0f2f1; border: 1px solid #4db6ac; color: #00695c; font-weight: 700; }
+  #configReportToggleBtn:hover { background: #c7ebe7; }
+
   tr.manual-row td { background: #fffbf0; border-bottom: 1px solid #eee; padding: 10px 12px 12px; }
   tr.manual-row.problem td { background: #fdecea; }
   tr.manual-row.collapsed { display: none; }
@@ -306,6 +314,10 @@
         </ol>
       </div>
     </div>
+  </div>
+
+  <div id="configReportNote" class="hidden">
+    <button id="configReportToggleBtn" type="button">📊 형상 감사 보고서</button>
   </div>
 
   <script type="module" src="audit.js"></script>

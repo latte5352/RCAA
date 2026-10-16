@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>형상 상태 및 주기적 형상 감사 보고서</title>
+<style>
+  body { margin: 0; font-family: sans-serif; background: #f1fbfa; color: #222; font-size: 15px; }
+  header { position: sticky; top: 0; z-index: 5; background: #fff; border-bottom: 1px solid #bfe6e3; padding: 14px 24px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  h1 { font-size: 18px; margin: 0 0 4px; color: #00695c; }
+  #subtitle { font-size: 13px; color: #666; }
+  main { padding: 20px 24px 60px; max-width: 920px; margin: 0 auto; }
+
+  button { cursor: pointer; padding: 8px 14px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
+  button:hover { background: #f0f0f0; }
+
+  .config-report-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 13px; color: #444; }
+  .config-report-row input[type="date"] { padding: 6px 8px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; }
+  #saveBaselineBtn { font-size: 12px; color: #00695c; }
+
+  .config-report-section-title { font-size: 13px; font-weight: 700; color: #00695c; margin: 18px 0 6px; }
+  .config-report-section-title:first-of-type { margin-top: 0; }
+  .config-report-field-row { display: flex; gap: 8px; margin-bottom: 4px; }
+  #titleBox { flex: 1; padding: 8px 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; background: #fff; }
+
+  /* 탭으로 구분된 실제 복사용 텍스트(bodyBox)는 길이가 들쭉날쭉한 이름들 때문에 모노스페이스로도
+     줄이 안 맞는다 - 화면엔 안 보이게 숨겨두고 복사 전용으로만 쓰고, 사람이 보는 건 아래
+     preview(진짜 HTML 표)로 대체한다. */
+  #bodyBox { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+  /* 안쪽 내용(제목·표 등)은 전부 인라인 스타일로 그린다(configReport.js의 buildReportHtml) - 이
+     HTML을 "내용 복사"가 그대로 클립보드에 실어서, 다른 사이트(노션/워드 등 서식 있는 에디터)에
+     붙여도 글자 굵기/표 테두리가 똑같이 살아있게 하기 위함 - 클립보드로 나갈 때는 여기
+     스타일시트가 안 따라가므로 class만으론 서식이 안 보존된다. */
+  .config-report-preview { max-height: 480px; overflow-y: auto; border: 1px solid #ccc; border-radius: 6px; padding: 14px 16px; font-size: 13px; line-height: 1.6; color: #333; background: #fff; }
+  #copyBodyBtn { margin-top: 8px; }
+  #almHubSubmitBtn { margin-top: 8px; background: #e0f2f1; border-color: #4db6ac; color: #00695c; font-weight: 600; }
+  #almHubSubmitBtn:hover { background: #c7ebe7; }
+  #almHubStatus { margin-top: 8px; padding: 8px 10px; border-radius: 4px; font-size: 13px; }
+  #almHubStatus.ok { background: #e3f5e6; color: #1e7e34; border: 1px solid #b7e0bd; }
+  #almHubStatus.err { background: #fdecea; color: #c0392b; border: 1px solid #eab4ae; }
+
+  #pendingWrap { background: #fff3cd; border: 1px solid #f0c14b; border-radius: 6px; padding: 10px 12px; margin-bottom: 14px; font-size: 13px; color: #8a6d1f; }
+  #pendingWrap .row { padding: 3px 0; }
+
+  /* 클릭해도 되고 Ctrl+V로 바로 붙여넣어도 된다는 걸 보여주는 점선 영역 - 비어있을 때는
+     안내 문구만, 스크린샷이 붙으면 미리보기+지우기 버튼으로 바뀐다. */
+  .bitbucket-zone { border: 2px dashed #9fd4cf; border-radius: 6px; padding: 18px; text-align: center; cursor: pointer; background: #fafffe; }
+  .bitbucket-zone:hover, .bitbucket-zone:focus { background: #eafbf9; border-color: #4db6ac; outline: none; }
+  #bitbucketHint { color: #888; font-size: 13px; }
+  #bitbucketPreview { max-width: 100%; max-height: 320px; margin: 8px auto 0; border: 1px solid #ccc; border-radius: 4px; display: block; }
+  #bitbucketClearBtn { margin-top: 10px; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>📊 형상 상태 및 주기적 형상 감사 보고서</h1>
+    <div id="subtitle"></div>
+  </header>
+  <main>
+    <div class="config-report-row">
+      <label for="dateInput">기준일</label>
+      <input type="date" id="dateInput">
+      <button id="refreshBtn" type="button">다시 생성</button>
+    </div>
+    <div class="config-report-row">
+      <button id="saveBaselineBtn" type="button">현재 상태를 비교 기준으로 저장 (테스트용 - codebeamer엔 반영 안 됨)</button>
+    </div>
+
+    <div id="pendingWrap" class="hidden">
+      <div class="config-report-section-title" style="margin-top:0;">🙋 아직 직접 확인이 끝나지 않아 집계에서 뺀 항목</div>
+      <div id="pendingList"></div>
+    </div>
+
+    <div class="config-report-section-title">제목</div>
+    <div class="config-report-field-row">
+      <input type="text" id="titleBox" readonly>
+      <button id="copyTitleBtn" type="button">제목 복사</button>
+    </div>
+
+    <div class="config-report-section-title">내용 (미리보기 - 복사하면 표 부분은 다른 사이트에서 표로 인식되는 탭 구분 텍스트로 복사됩니다)</div>
+    <div id="preview" class="config-report-preview"></div>
+    <textarea id="bodyBox" readonly spellcheck="false" tabindex="-1" aria-hidden="true"></textarea>
+    <div>
+      <button id="copyBodyBtn" type="button">내용 복사</button>
+      <button id="copyTableBtn" type="button">NG 표만 복사</button>
+      <button id="almHubSubmitBtn" type="button">ALM Hub에 올리기</button>
+    </div>
+    <div id="almHubStatus" class="hidden"></div>
+
+    <div class="config-report-section-title">Bitbucket 감사 결과 스크린샷 (선택 - 다른 사이트에 올릴 때 직접 첨부)</div>
+    <div id="bitbucketZone" class="bitbucket-zone" tabindex="0">
+      <div id="bitbucketHint">📋 여기를 클릭해서 파일을 고르거나, 캡처한 화면을 Ctrl+V로 바로 붙여넣으세요</div>
+      <img id="bitbucketPreview" class="hidden" alt="Bitbucket 감사 결과 스크린샷 미리보기">
+      <button id="bitbucketClearBtn" type="button" class="hidden">스크린샷 지우기</button>
+    </div>
+    <input type="file" id="bitbucketInput" accept="image/*" class="hidden">
+  </main>
+
+  <script type="module" src="configReport.js"></script>
+</body>
+</html>

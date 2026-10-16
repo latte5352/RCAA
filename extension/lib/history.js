@@ -223,3 +223,23 @@ export async function updateAppliedSnapshot(projectName, records) {
   const current = extractAppliedSnapshotEntries(records);
   await saveAppliedSnapshot(projectName, { ...previous, ...current });
 }
+
+// ── 주기적 형상 감사 보고서용 NG 스냅샷 ───────────────────────────────────────
+// "신규 NG / 해결·삭제 NG / 지속 NG"를 집계하려면 "직전 보고 시점에 뭐가 NG였는지"가
+// 필요하다 - applied_snapshot과 같은 시점(반영 성공 시)에 같이 갱신해서, "가장 최근 반영한
+// 감사" 기준으로 비교한다(diffAgainstAppliedSnapshot과 같은 기준점 개념).
+function periodicNgSnapshotKey(projectName) {
+  return `periodic_ng_snapshot_${projectName}`;
+}
+
+/** @returns {Promise<Set<string>>} 직전 반영 시점에 NG였던 트래커명 집합 */
+export async function loadPeriodicNgSnapshot(projectName) {
+  const key = periodicNgSnapshotKey(projectName);
+  const stored = await chrome.storage.local.get(key);
+  return new Set(stored[key] || []);
+}
+
+/** 반영(applyBtn)이 실제로 성공했을 때만 호출한다 - updateAppliedSnapshot과 같은 시점. */
+export async function updatePeriodicNgSnapshot(projectName, ngTrackerNames) {
+  await chrome.storage.local.set({ [periodicNgSnapshotKey(projectName)]: [...ngTrackerNames] });
+}

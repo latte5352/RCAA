@@ -10,7 +10,11 @@ import { createClient } from "./lib/codebeamerClient.js";
 import { collectAuditData } from "./lib/collector.js";
 import { runAudit, DEFAULT_PERIODIC_CADENCE, DEFAULT_PERIODIC_ANCHOR } from "./lib/ruleEngine.js";
 import { PERIODIC_TRACKERS } from "./lib/periodicTrackers.js";
-import { diffAndUpdateHistory, loadHistorySnapshot, diffAgainstAppliedSnapshot, updateAppliedSnapshot } from "./lib/history.js";
+import {
+  diffAndUpdateHistory, loadHistorySnapshot, diffAgainstAppliedSnapshot, updateAppliedSnapshot,
+  updatePeriodicNgSnapshot,
+} from "./lib/history.js";
+import { buildPeriodicNgReport } from "./lib/configReport.js";
 import { pushAllResults } from "./lib/pushResults.js";
 import { saveReviewState, loadReviewState } from "./lib/reviewState.js";
 import { checkUserProjectRole } from "./lib/memberRoles.js";
@@ -72,6 +76,8 @@ const actionsToolbar = document.getElementById("actionsToolbar");
 const applyBtn = document.getElementById("applyBtn");
 const cancelBtn = document.getElementById("cancelBtn");
 const statusEl = document.getElementById("status");
+const configReportNote = document.getElementById("configReportNote");
+const configReportToggleBtn = document.getElementById("configReportToggleBtn");
 
 let auditRecords = [];
 let warningsData = {
@@ -520,6 +526,57 @@ const guidelineCloseBtn = document.getElementById("guidelineCloseBtn");
 guidelineToggleBtn.addEventListener("click", () => guidelinePanel.classList.toggle("hidden"));
 guidelineCloseBtn.addEventListener("click", () => guidelinePanel.classList.add("hidden"));
 
+// ── 형상 상태 및 주기적 형상 감사 보고서 ─────────────────────────────────────
+// "반영"이 끝난 뒤에 쓰는 게 원래 용도지만(진짜 NG 집합 비교 기준은 applyBtn에서 갱신하는
+// periodic_ng_snapshot), 테스트 중엔 반영 전에도 미리 볼 수 있어야 해서 반영 여부와 무관하게
+// 열람 가능하게 둔다 - 이 패널은 매번 열 때마다 현재 상태로 다시 계산만 할 뿐, 아무 것도
+// 저장하지 않는다(날짜만 이 창이 열려있는 동안 기억).
+function todayDateInputValue() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// 아직 반영(applyBtn)을 누르지 않아도 보고서를 미리 볼 수 있어야 해서, 화면의 "직접 판정
+// 수정" 입력창에 지금 들어있는 값(아직 record에는 반영 전)을 복제본에 덮어써서 쓴다 - 실제
+// auditRecords는 반영 전까지 건드리지 않는다(applyManualInputsToRecords와 같은 로직을
+// applyManualEntryToRecord로 공유). auditRecords와 manual-row는 항상 같은 순서로 1:1
+// 대응한다(renderItemsTable이 매번 auditRecords 전체를 그 순서 그대로 그림).
+function buildEffectiveRecordsForReport() {
+  const entries = collectManualRowInputs();
+  return auditRecords.map((record, i) => {
+    const entry = entries[i];
+    if (!entry) return record;
+    const clone = { ...record };
+    applyManualEntryToRecord(clone, entry);
+    return clone;
+  });
+}
+
+// 형상 상태 및 주기적 형상 감사 보고서는 audit.html 안에 포스트잇처럼 끼워넣기엔 내용이
+// 많아서(상태변경 섹션 + NG 표 + 스크린샷) 칸이 너무 좁았다 - 별도의 독립된 팝업 창
+// (configReport.html, popup.js의 openAuditWindow와 같은 방식)으로 띄운다. 그 창은 지금 이
+// 화면의 메모리 상태를 직접 못 읽으니(별도 창/페이지), 열기 직전에 현재 상태(화면의 "직접
+// 판정 수정" 입력창에 지금 들어있는 값까지 반영한 최종본)를 review_state_<project>에 저장해둔다 -
+// "직전 감사 결과 보기"로 다시 연 화면에서 이 버튼을 눌러도 그때 저장된 결과를 그대로 보여주는
+// 것도 이 저장을 공유하기 때문이다(renderStoredReview도 같은 state.records/warnings를 씀).
+configReportToggleBtn.addEventListener("click", async () => {
+  const effectiveRecords = buildEffectiveRecordsForReport();
+  await saveReviewState(projectName, {
+    savedAt: new Date().toISOString(),
+    status: reviewStatus,
+    params: { cadence, anchor, trackerCil, trackerNcl, onlyTrackerNames, projectId: currentProjectId },
+    records: effectiveRecords,
+    warnings: warningsData,
+    excludedCilIds: Array.from(getExcludedCilIds()),
+  });
+  chrome.windows.create({
+    url: `${chrome.runtime.getURL("configReport.html")}?project=${encodeURIComponent(projectName)}`,
+    type: "popup",
+    width: 1000,
+    height: 800,
+  });
+});
+
 const BOM = "﻿"; // 엑셀에서 CSV를 열었을 때 한글이 깨지지 않게 하는 UTF-8 BOM
 
 function csvField(value) {
@@ -917,17 +974,22 @@ function showManualValidationProblems(problems) {
 // textarea는 이제 "추가로 덧붙이는 글"이 아니라 자동 코멘트로 미리 채워진 걸 그대로 쓰거나
 // 직접 고친 최종 코멘트라서, 그대로 덮어쓴다(createManualFieldRow의 change 리스너가 이미
 // 규칙별 자동 사유를 넣고 빼는 걸 처리해뒀다).
+// entry(.manual-row에서 고른 값들)를 record 하나에 덮어쓴다 - 실제 반영(applyManualInputsToRecords)과
+// 보고서 미리보기(buildEffectiveRecordsForReport)가 똑같은 규칙으로 공유해서 쓴다.
+function applyManualEntryToRecord(record, entry) {
+  for (const [rule, info] of Object.entries(entry.verdicts)) {
+    if (info.value === "auto") continue; // 선택 사항인데 안 건드림 - 자동 판정값 그대로 둠
+    record[rule] = info.value === "1" ? 1 : info.value === "2" ? 2 : null; // "0"(N/A)과 ""는 둘 다 null
+  }
+  record.comment = entry.comment;
+}
+
 function applyManualInputsToRecords(excludedCilIds) {
   for (const entry of collectManualRowInputs()) {
     if (excludedCilIds.has(entry.cilId)) continue;
     const record = auditRecords.find((r) => r.cilId === entry.cilId);
     if (!record) continue;
-
-    for (const [rule, info] of Object.entries(entry.verdicts)) {
-      if (info.value === "auto") continue; // 선택 사항인데 안 건드림 - 자동 판정값 그대로 둠
-      record[rule] = info.value === "1" ? 1 : info.value === "2" ? 2 : null; // "0"(N/A)과 ""는 둘 다 null
-    }
-    record.comment = entry.comment;
+    applyManualEntryToRecord(record, entry);
   }
 }
 
@@ -981,6 +1043,11 @@ applyBtn.addEventListener("click", async () => {
     // 반영 안 한 경우까지 이 기준점이 움직이면, 다음 감사의 "🆕/🔄" 안내가 보고도 안 한
     // 감사 대비로 비교돼버린다.
     await updateAppliedSnapshot(projectName, auditRecords);
+    // 형상 감사 보고서의 "신규/지속/해결 NG" 집계 기준점도 같은 시점(반영 성공)에 갱신한다 -
+    // validateManualInputs가 이미 통과한 뒤라 직접확인 대상이 전부 해소된 상태이므로,
+    // previousNgNames는 필요 없다(현재 NG 집합만 뽑으면 됨).
+    const { currentNgNames } = buildPeriodicNgReport(auditRecords, excludedCilIds, new Set(), getManualCheckFlags);
+    await updatePeriodicNgSnapshot(projectName, currentNgNames);
   } catch (e) {
     statusEl.textContent = `반영 중 오류: ${e.message}`;
     setControlsEnabled(true);
@@ -1163,6 +1230,7 @@ async function runNewAudit(client, username) {
   renderWarnings(warningsData);
   renderItemsTable(auditRecords);
   actionsToolbar.classList.remove("hidden");
+  configReportNote.classList.remove("hidden");
 
   await persistReviewState("pending");
 }
@@ -1188,6 +1256,7 @@ async function renderStoredReview(state, client, username) {
   renderWarnings(warningsData);
   renderItemsTable(auditRecords, new Set(state.excludedCilIds || []));
   actionsToolbar.classList.remove("hidden");
+  configReportNote.classList.remove("hidden");
 
   if (reviewStatus === "applied") {
     reviewNotice.textContent = `이 감사는 이미 codebeamer에 반영되었습니다 (저장 시각: ${when}).${scopeNotice} 결과 확인만 가능하며, 다시 반영할 수는 없습니다.`;

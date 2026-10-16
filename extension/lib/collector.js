@@ -469,6 +469,10 @@ async function processTrackerRow(client, mergedRow, ctx) {
       testResultClosedDate: "",
       itemFetchIncomplete: false,
       noLinkedTracker: true,
+      // CIL 항목 자체의 pRWorkItem(Audit Result를 NG로 눌렀을 때 codebeamer가 자동 발행하는 PR)
+      // 목록 - 형상 감사 보고서의 "PR WorkItem" 칸에 쓴다(collector.js의 prIdList 참고).
+      prIdList: mergedRow.prIdList || [],
+      prStatusByNumber: ctx.prStatusByNumber,
     };
   }
 
@@ -651,6 +655,10 @@ async function processTrackerRow(client, mergedRow, ctx) {
     hasEverBeenApproved: (ctx.allBaselinesByTracker.get(tName) || []).some(
       (b) => (b.versionType || "").includes("Approved")
     ),
+    // CIL 항목 자체의 pRWorkItem(Audit Result를 NG로 눌렀을 때 codebeamer가 자동 발행하는 PR)
+    // 목록 - 형상 감사 보고서의 "PR WorkItem" 칸에 쓴다.
+    prIdList: mergedRow.prIdList || [],
+    prStatusByNumber: ctx.prStatusByNumber,
   };
 }
 
@@ -823,6 +831,11 @@ export async function collectAuditData(client, { projectName, trackerCil, tracke
   // 필요 없어졌다 - 아래 fetchNclRelations/buildNclPrMap 호출은 주석 처리, 필요해지면 복구.
   const nclTracker = allTrackers.find((t) => t.name === trackerNcl);
   const validPrNumbers = new Set();
+  // PR 번호 -> 그 NCL 항목 자신의 상태(예: "Open"/"Closed"). 예전엔 "이 PR이 지금 열려있는지"를
+  // 알려고 항목마다 /relations를 따로 조회했는데(50초짜리 병목), 그럴 필요 없이 이미 통째로
+  // 불러온 nclItemsResult.items 하나하나가 자기 자신의 status를 이미 들고 있다 - 형상 감사
+  // 보고서(configReport.js)가 "닫힌 PR은 안 보여준다" 판단에 추가 조회 없이 이 값을 그대로 쓴다.
+  const prStatusByNumber = {};
   if (nclTracker) {
     onProgress?.({ phase: "NCL(부적합 목록) 항목 조회 중..." });
     const nclItemsResult = await client.fetchAllItems(`${client.baseUrl}${nclTracker.uri}/items`, {
@@ -830,11 +843,11 @@ export async function collectAuditData(client, { projectName, trackerCil, tracke
     });
     for (const item of nclItemsResult.items) {
       const m = /(\d+)/.exec(item.name || "");
-      if (m) validPrNumbers.add(m[1]);
+      if (m) {
+        validPrNumbers.add(m[1]);
+        prStatusByNumber[m[1]] = (item.status || {}).name || "";
+      }
     }
-    // onProgress?.({ phase: "NCL-CIL 연결 관계 조회 중..." });
-    // const allRelations = await mapWithConcurrency(nclItemsResult.items, 20, (item) => fetchNclRelations(client, item));
-    // prMap = buildNclPrMap(allRelations.flat());
   }
 
   // Change Request(CR 매칭) - PR과 같은 방식으로, "실제 존재하는 CR 번호" 집합만 만든다.
@@ -855,7 +868,10 @@ export async function collectAuditData(client, { projectName, trackerCil, tracke
 
   onProgress?.({ phase: `감사 대상 트래커 ${targetRows.length}개 조회 시작...` });
   const isEventbasedWorkflow = makeEventBasedChecker(client);
-  const ctx = { reviewReportUriMap, latestBaselines, allBaselinesByTracker, docHistoryCheckpoints, docHistoryCheckpointsById, validPrNumbers, validCrNumbers, isEventbasedWorkflow };
+  const ctx = {
+    reviewReportUriMap, latestBaselines, allBaselinesByTracker, docHistoryCheckpoints, docHistoryCheckpointsById,
+    validPrNumbers, validCrNumbers, prStatusByNumber, isEventbasedWorkflow,
+  };
 
   // processTrackerRow 안의 client.getJson/putJson은 순수 네트워크 오류(fetch 자체 실패 -
   // HTTP 에러 코드가 아니라 연결이 끊긴 경우)를 못 잡고 그대로 던진다. 트래커 하나가 이렇게

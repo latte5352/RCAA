@@ -30,9 +30,9 @@ const UPLOAD_TRUE_STATUSES = new Set(["Approved", "Internal Baselined", "Gate Ba
 // UPLOAD_TRUE_STATUSES 중 "Waiting for Approval"은 아직 승인 전이라 반려되면 다시 수정될 수
 // 있지만, 이 세 상태는 이미 승인/베이스라인까지 끝난 상태라 그 이후로는 버전업이나 PR 조치
 // 기술을 더 따질 필요가 없다(checkVersionRule/checkDocHistoryRule 참고).
-const FINALIZED_STATUSES = new Set(["Approved", "Internal Baselined", "Gate Baselined"]);
+export const FINALIZED_STATUSES = new Set(["Approved", "Internal Baselined", "Gate Baselined"]);
 const UPLOAD_FALSE_STATUSES = new Set(["In Review", "Open"]);
-const EVENTBASED_TERMINAL_STATUSES = new Set(["Released", "Read Only", "Review Closed", "Audit Closed"]);
+export const EVENTBASED_TERMINAL_STATUSES = new Set(["Released", "Read Only", "Review Closed", "Audit Closed"]);
 // "PR" 바로 뒤(공백/콜론/하이픈/물결 0~3글자 이내)에 오는 숫자만 PR 번호로 인식한다.
 // 예전엔 [^\d]*?로 아무 문자든 건너뛰고 첫 숫자를 잡았는데, "PR ID & CR ID :" 같은 라벨
 // 뒤에 codebeamer 리치텍스트 에디터가 자동으로 붙이는 스타일 마크업(예: text-indent:0px)의

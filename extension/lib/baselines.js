@@ -7,12 +7,10 @@ import { stripTrailingQualifier } from "./wikiTable.js";
 
 const VERSION_PATTERN = /_v\.?(\d+[.\d]*)$/;
 const DATE_PATTERN = /(\d{6}\.\d+)$/;
-const PR_IN_BASELINE_DESC_RE = /PR~-(\d+)/;
-const CR_IN_BASELINE_DESC_RE = /CR~-(\d+)/;
 
 /**
  * codebeamer 베이스라인 API 응답({"baselines": [...]})을 파싱한다.
- * @returns {Array<{baselineId, tracker, versionType, version, owner, description, createdAt, prId, crId}>}
+ * @returns {Array<{baselineId, tracker, versionType, version, owner, description, createdAt}>}
  */
 export function parseBaselineData(data) {
   const rows = [];
@@ -44,9 +42,6 @@ export function parseBaselineData(data) {
       versionType += " (Approved)";
     }
 
-    const prMatch = PR_IN_BASELINE_DESC_RE.exec(description);
-    const crMatch = CR_IN_BASELINE_DESC_RE.exec(description);
-
     // parent가 있을 경우에만 추가: parent가 없는 것들은 실제 베이스라인이 아님
     if (item.parent) {
       rows.push({
@@ -57,8 +52,6 @@ export function parseBaselineData(data) {
         owner: item.owner ? item.owner.firstName : undefined,
         description,
         createdAt: item.createdAt,
-        prId: prMatch ? Number(prMatch[1]) : null,
-        crId: crMatch ? Number(crMatch[1]) : null,
       });
     }
   }
