@@ -2,10 +2,14 @@
   "manifest_version": 3,
   "name": "SUP.8 형상감사 자동화 (서버리스)",
   "version": "0.1.0",
-  "description": "codebeamer 주기적 형상감사 자동화 - 백엔드 서버 없이 확장에서 codebeamer에 직접 접속",
+  "description": "codebeamer 주기적 형상감사 자동화 - codebeamer에는 확장에서 직접 접속, 부서 공용 저장소 서버는 비교 기준 저장용으로만 사용",
   "action": {},
   "permissions": ["storage", "sidePanel"],
-  "host_permissions": ["https://codebeamer.slworld.com/*", "https://api-almhub.slworld.com/*"],
+  "host_permissions": [
+    "https://codebeamer.slworld.com/*",
+    "https://api-almhub.slworld.com/*",
+    "http://127.0.0.1:8787/*"
+  ],
   "side_panel": {
     "default_path": "popup.html"
   },

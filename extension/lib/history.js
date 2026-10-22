@@ -1,16 +1,13 @@
-// 원본 backend/history.py를 그대로 옮긴 것. 서버 디스크 대신 이 브라우저의
-// chrome.storage.local에 프로젝트별 스냅샷을 저장한다 (이 컴퓨터에만 남음 - 여러 명이 같은
-// 프로젝트를 감사하면 "지난 감사" 기준이 사람마다 다를 수 있다는 한계는 원본과 달리
-// 서버리스 구조상 어쩔 수 없이 생기는 부분이다).
+// 원본 backend/history.py를 그대로 옮긴 것. 프로젝트별 스냅샷은 부서 공용 저장소
+// 서버(server/app.py, lib/serverClient.js)에 저장한다 - 그래야 같은 프로젝트를 여러 명이
+// 감사해도 "지난 감사" 기준이 팀 전체 똑같이 보인다(이전엔 chrome.storage.local만 써서
+// 이 컴퓨터에만 남는 한계가 있었다).
 
-function historyKey(projectName) {
-  return `history_snapshot_${projectName}`;
-}
+import { getServerValue, putServerValue } from "./serverClient.js";
 
 async function loadSnapshot(projectName) {
-  const key = historyKey(projectName);
-  const stored = await chrome.storage.local.get(key);
-  return stored[key] || {};
+  const value = await getServerValue(projectName, "history_snapshot");
+  return value || {};
 }
 
 /**
@@ -24,14 +21,13 @@ export async function loadHistorySnapshot(projectName) {
 }
 
 async function saveSnapshot(projectName, snapshot) {
-  await chrome.storage.local.set({ [historyKey(projectName)]: snapshot });
+  await putServerValue(projectName, "history_snapshot", snapshot);
 }
 
 /**
- * 스냅샷(문서 이력 체크포인트 포함)을 JSON으로 내보낸다. chrome.storage.local은 이 브라우저
- * 안에만 있어서, 같은 프로젝트를 여러 사람이 각자 다른 컴퓨터에서 감사하면 체크포인트가
- * 서로 안 맞을 수 있다(위 주석 참고) - 이 파일을 팀원에게 공유해서 수동으로 동기화하기
- * 위한 용도.
+ * 스냅샷(문서 이력 체크포인트 포함)을 JSON으로 내보낸다. 이제 공용 저장소 서버 덕분에 팀
+ * 전체가 보통 같은 체크포인트를 보지만, 서버 접근이 막힌 환경에서 수동으로 동기화하고
+ * 싶을 때를 위해 이 내보내기/가져오기는 그대로 남겨둔다.
  */
 export async function exportHistorySnapshot(projectName) {
   return { projectName, exportedAt: new Date().toISOString(), snapshot: await loadSnapshot(projectName) };
@@ -151,14 +147,9 @@ export async function diffAndUpdateHistory(projectName, records) {
 // 감사만 돌려보고 codebeamer에 반영(보고)하지 않은 경우까지 "직전 감사"로 쳐버리면, 실제로는
 // 아직 아무에게도 보고 안 한 감사 대비로 잘못 비교하게 된다. 그래서 이 안내만 따로, 반영이
 // 실제로 성공했을 때만 갱신되는 별도 스냅샷과 비교한다.
-function appliedSnapshotKey(projectName) {
-  return `applied_snapshot_${projectName}`;
-}
-
 async function loadAppliedSnapshotRaw(projectName) {
-  const key = appliedSnapshotKey(projectName);
-  const stored = await chrome.storage.local.get(key);
-  if (stored[key]) return stored[key];
+  const value = await getServerValue(projectName, "applied_snapshot");
+  if (value) return value;
   // 이 기능 도입 전이라 이 프로젝트의 "반영 기준" 스냅샷이 아직 한 번도 없으면, 기존 "마지막
   // 실행" 스냅샷을 첫 비교 기준으로 대신 쓴다 - 안 그러면 이 기능이 처음 쓰이는 순간 지금 감사
   // 대상 전체가 "새로 등재됨"으로 잘못 떠서 혼란을 준다.
@@ -166,7 +157,7 @@ async function loadAppliedSnapshotRaw(projectName) {
 }
 
 async function saveAppliedSnapshot(projectName, snapshot) {
-  await chrome.storage.local.set({ [appliedSnapshotKey(projectName)]: snapshot });
+  await putServerValue(projectName, "applied_snapshot", snapshot);
 }
 
 function extractAppliedSnapshotEntries(records) {
@@ -228,18 +219,13 @@ export async function updateAppliedSnapshot(projectName, records) {
 // "신규 NG / 해결·삭제 NG / 지속 NG"를 집계하려면 "직전 보고 시점에 뭐가 NG였는지"가
 // 필요하다 - applied_snapshot과 같은 시점(반영 성공 시)에 같이 갱신해서, "가장 최근 반영한
 // 감사" 기준으로 비교한다(diffAgainstAppliedSnapshot과 같은 기준점 개념).
-function periodicNgSnapshotKey(projectName) {
-  return `periodic_ng_snapshot_${projectName}`;
-}
-
 /** @returns {Promise<Set<string>>} 직전 반영 시점에 NG였던 트래커명 집합 */
 export async function loadPeriodicNgSnapshot(projectName) {
-  const key = periodicNgSnapshotKey(projectName);
-  const stored = await chrome.storage.local.get(key);
-  return new Set(stored[key] || []);
+  const value = await getServerValue(projectName, "periodic_ng_snapshot");
+  return new Set(value || []);
 }
 
 /** 반영(applyBtn)이 실제로 성공했을 때만 호출한다 - updateAppliedSnapshot과 같은 시점. */
 export async function updatePeriodicNgSnapshot(projectName, ngTrackerNames) {
-  await chrome.storage.local.set({ [periodicNgSnapshotKey(projectName)]: [...ngTrackerNames] });
+  await putServerValue(projectName, "periodic_ng_snapshot", [...ngTrackerNames]);
 }

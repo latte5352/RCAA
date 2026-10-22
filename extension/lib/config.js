@@ -1,4 +1,11 @@
 // 원본 프로젝트의 config.py 기본값을 그대로 옮긴 것.
+// 부서 공용 저장소 서버(server/app.py) 주소 - history/applied/periodic-ng snapshot과
+// review_state를 이제 이 서버가 들고 있어서 여러 사람이 같은 "지난 감사" 기준을 본다
+// (lib/history.js, lib/reviewState.js 참고). 아직 실제 배포 주소를 몰라서 로컬 기본값으로
+// 둔다 - 서버 주소가 정해지면 이 값과 manifest.json의 host_permissions를 같이 바꿔야 한다.
+// "localhost"로 두면 Chrome이 IPv6(::1)로 먼저 붙어보려다가(파이썬 서버는 IPv4만 듣고 있어서)
+// 한참 지나서야 IPv4로 넘어가는 지연이 생길 수 있어서, 127.0.0.1로 명시해 그 모호함을 없앤다.
+export const APP_SERVER_BASE_URL = "http://127.0.0.1:8787";
 export const BASE_URL = "https://codebeamer.slworld.com/cb/rest";
 export const BASE_URL_V3 = "https://codebeamer.slworld.com/cb/api/v3";
 // 정식 REST API가 아니라 프로젝트 멤버 화면(cb/project/{key}/members)이 내부적으로 쓰는
